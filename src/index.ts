@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import { analyzeReports, printDiff } from "./analyze.js";
 import { hasFlag, loadConfig, valueAfter } from "./config.js";
+import { runDashboard } from "./dashboard.js";
 import { evaluateTask } from "./evaluator.js";
 import { judgeTask } from "./judge.js";
 import { planTasks } from "./planner.js";
@@ -68,6 +69,12 @@ async function main(): Promise<void> {
 
       case "status":
         printStatus(state);
+        break;
+
+      case "dashboard":
+        await runDashboard(config, {
+          intervalSeconds: Number(valueAfter(args, "--interval-seconds") ?? "5"),
+        });
         break;
 
       default:
