@@ -20,7 +20,7 @@
     "holdoutCorpus": "test_corpus_v3_holdout",
     "fullCorpus": "test_corpus_v3",
     "repeatsDev": 1,
-    "repeatsGate": 3,
-    "repeatsFinal": 5
+    "repeatsGate": 1,
+    "repeatsFinal": 1
   }
 }
