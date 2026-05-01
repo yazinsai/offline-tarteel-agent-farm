@@ -25,10 +25,19 @@ export async function startWorkerForTask(
   upsertTask(state, task);
   saveState(config.statePath, state);
 
-  if (config.mode === "cloud") {
-    await startCloudWorker(config, state, task);
-  } else {
-    await startLocalWorker(config, state, task);
+  try {
+    if (config.mode === "cloud") {
+      await startCloudWorker(config, state, task);
+    } else {
+      await startLocalWorker(config, state, task);
+    }
+  } catch (error) {
+    task.status = "failed";
+    task.notes = error instanceof Error ? error.message : String(error);
+    task.updatedAt = now();
+    upsertTask(state, task);
+    saveState(config.statePath, state);
+    throw error;
   }
 }
 
