@@ -37,9 +37,13 @@ export async function runDashboard(
   config: FarmConfig,
   options: { intervalSeconds: number },
 ): Promise<void> {
-  process.stdout.write("\x1b[?25l");
+  process.stdout.write("\x1b[?1049h\x1b[?25l");
   process.on("SIGINT", () => {
-    process.stdout.write("\x1b[?25h\n");
+    process.stdout.write("\x1b[?25h\x1b[?1049l\n");
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    process.stdout.write("\x1b[?25h\x1b[?1049l\n");
     process.exit(0);
   });
 
@@ -85,6 +89,16 @@ function renderDashboard(config: FarmConfig, state: FarmState, frame: number): v
   );
   blank();
 
+  const activeEvals = state.tasks.filter((task) => task.status === "evaluating" && task.evalProgress);
+  if (activeEvals.length > 0) {
+    panel(
+      "Evaluation Progress",
+      activeEvals.flatMap((task) => formatEvalProgress(task, width)),
+      width,
+    );
+    blank();
+  }
+
   panel(
     "Latest Metrics",
     latestRuns.length === 0
@@ -120,6 +134,7 @@ function renderDashboard(config: FarmConfig, state: FarmState, frame: number): v
           ),
     width,
   );
+  process.stdout.write("\x1b[J");
 }
 
 function printHero(
@@ -152,6 +167,44 @@ function formatTask(task: Task, run: RunRecord | undefined, width: number): stri
     `${ansi.bold}${pad(task.track, 18)}${ansi.reset} ${ansi.gray}${pad(age, 7)}${ansi.reset} ` +
     truncate(`${task.hypothesis}${metric}`, width - 54)
   );
+}
+
+function formatEvalProgress(task: Task, width: number): string[] {
+  const progress = task.evalProgress;
+  if (!progress) return [];
+  const done = progress.completedShards;
+  const failed = progress.failedShards;
+  const running = progress.shards.filter((shard) => shard.status === "running").length;
+  const launching = progress.shards.filter((shard) => shard.status === "launching").length;
+  const pending = progress.shards.filter((shard) => shard.status === "pending").length;
+  const header =
+    `${ansi.gray}${shortId(task.id)}${ansi.reset} ${ansi.bold}${pad(task.track, 18)}${ansi.reset} ` +
+    `${shortCorpus(progress.corpus)} r${progress.repeats} ${progress.backend} ` +
+    `${progressBar(done, progress.shardCount)} ${done}/${progress.shardCount} done ` +
+    `${ansi.green}${running} running${ansi.reset} ${ansi.yellow}${launching} launching${ansi.reset} ` +
+    `${ansi.gray}${pending} pending${ansi.reset}` +
+    (failed ? ` ${ansi.red}${failed} failed${ansi.reset}` : "");
+
+  const shardRows = progress.shards.slice(0, 12).map((shard) => {
+    const statusColor =
+      shard.status === "completed"
+        ? ansi.green
+        : shard.status === "failed"
+          ? ansi.red
+          : shard.status === "running"
+            ? ansi.cyan
+            : shard.status === "launching"
+              ? ansi.yellow
+              : ansi.gray;
+    const url = shard.modalAppUrl ? ` ${ansi.gray}${shard.modalAppUrl.replace("https://modal.com/apps/yazin87/main/", "")}${ansi.reset}` : "";
+    return truncate(
+      `  shard ${String(shard.index + 1).padStart(2, "0")} ${statusColor}${pad(shard.status, 9)}${ansi.reset} ` +
+        `${pad(`${shard.sampleCount} samples`, 10)} ${shard.summary ?? ""}${url}`,
+      width - 6,
+    );
+  });
+
+  return [truncate(header, width - 6), ...shardRows];
 }
 
 function formatMetricRun(state: FarmState, run: RunRecord, width: number): string {
@@ -210,6 +263,12 @@ function metricBar(value: number): string {
   const filled = Math.max(0, Math.min(cells, Math.round(value * cells)));
   const color = metricColor(value);
   return `${color}${"█".repeat(filled)}${ansi.gray}${"░".repeat(cells - filled)}${ansi.reset}`;
+}
+
+function progressBar(done: number, total: number): string {
+  const cells = 12;
+  const filled = total > 0 ? Math.max(0, Math.min(cells, Math.round((done / total) * cells))) : 0;
+  return `${ansi.green}${"█".repeat(filled)}${ansi.gray}${"░".repeat(cells - filled)}${ansi.reset}`;
 }
 
 function metricColor(value: number): string {
@@ -304,7 +363,7 @@ function blank(): void {
 }
 
 function clearScreen(): void {
-  process.stdout.write("\x1b[2J\x1b[H");
+  process.stdout.write("\x1b[H");
 }
 
 function sleep(ms: number): Promise<void> {

@@ -116,6 +116,17 @@ Dokku evals default to one shard and `cpuLimitPercent: 70` so ONNX stability run
 ssh dokku-server 'dokku run offline-tarteel-agent-farm env EVAL_PARALLEL_SHARDS=4 EVAL_CPU_LIMIT_PERCENT=100 npm run eval -- --config config.dokku.json --task <task-id>'
 ```
 
+## Modal Evaluation
+
+Stability shards can run on Modal instead of the local/Dokku host:
+
+```bash
+modal setup
+EVAL_REMOTE=modal EVAL_PARALLEL_SHARDS=8 EVAL_MODAL_CPU=4 EVAL_MODAL_MEMORY_MB=8192 EVAL_MODAL_MAX_ATTEMPTS=3 npm run eval -- --task <task-id>
+```
+
+The evaluator creates one tarball per corpus, runs each shard through a Modal Sandbox wrapper, retries transient shard failures, prints the shard JSON artifact back to the coordinator, then merges reports locally. GPU is not used by default; the current ONNX runner is CPU-bound via `onnxruntime-node`.
+
 ## Cloud Mode
 
 Set this in `config.json`:

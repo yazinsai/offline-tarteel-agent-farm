@@ -19,8 +19,15 @@
     "targetSeqAcc": 0.9,
     "minPrecision": 0.72,
     "v2SeqAccRegressionTolerance": 0.01,
-    "parallelShards": 1,
+    "remoteBackend": "modal",
+    "parallelShards": 8,
     "cpuLimitPercent": 70,
+    "modal": {
+      "cpu": 4,
+      "memoryMb": 8192,
+      "image": "node:22-bookworm",
+      "maxAttempts": 3
+    },
     "devCorpus": "test_corpus_v3_dev",
     "devSampleLimit": 12,
     "holdoutCorpus": "test_corpus_v3_holdout",

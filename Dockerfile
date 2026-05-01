@@ -8,7 +8,12 @@ RUN apt-get update \
     git \
     openssh-client \
     python3 \
+    python3-venv \
   && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/modal \
+  && /opt/modal/bin/pip install --no-cache-dir modal \
+  && ln -s /opt/modal/bin/modal /usr/local/bin/modal
 
 RUN git config --system --add safe.directory '*'
 

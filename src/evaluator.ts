@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
-import type { FarmConfig, FarmState, RunRecord, StabilityReport, StabilitySample, Task } from "./types.js";
+import type { EvalShardProgress, FarmConfig, FarmState, RunRecord, StabilityReport, StabilitySample, Task } from "./types.js";
 import { ensureSymlink, readJson, writeJson } from "./fs.js";
 import { runCommand } from "./repo.js";
 import { addRun, makeId, now, saveState, upsertTask } from "./state.js";
@@ -130,7 +130,7 @@ function runStability(
   const manifest = readJson<Manifest>(manifestPath);
   const shardCount = Math.min(evaluationParallelShards(config), manifest.samples.length);
 
-  if (shardCount > 1) {
+  if (shardCount > 1 || evaluationRemoteBackend(config) === "modal") {
     return runParallelStability(
       config,
       state,
@@ -192,6 +192,10 @@ async function runParallelStability(
     const shardArtifact = join(artifactDir, `${corpus}-r${repeats}-shard-${index}.json`);
     return {
       artifactPath: shardArtifact,
+      index,
+      sampleCount: shardSamples.length,
+      shardCorpus,
+      shardDir,
       command: stabilityCommand(
         config,
         corpus,
@@ -203,7 +207,48 @@ async function runParallelStability(
   });
 
   console.log(`\n[${task.id}] ${corpus} x${repeats}: ${samples.length} samples across ${shardCount} shards`);
-  const results = await Promise.all(commands.map(({ command }) => runCommandStreaming(command, frontendPath)));
+  startEvalProgress(config, state, task, corpus, repeats, evaluationRemoteBackend(config), commands);
+  const modalBundlePath =
+    evaluationRemoteBackend(config) === "modal"
+      ? join(artifactDir, `${corpus}-r${repeats}.modal.tgz`)
+      : undefined;
+
+  if (modalBundlePath) {
+    console.log(`[${task.id}] creating Modal bundle once for ${corpus}`);
+    createModalBundle(repoPath, modalBundlePath);
+  }
+
+  let results: StreamingCommandResult[];
+  try {
+    results = await (evaluationRemoteBackend(config) === "modal"
+      ? Promise.all(
+          commands.map(({ artifactPath: shardArtifactPath, command, index, sampleCount, shardCorpus }) =>
+            runModalShard(
+                config,
+                task,
+                state,
+                repoPath,
+                modalBundlePath!,
+                corpus,
+                repeats,
+                index,
+                sampleCount,
+                shardCorpus,
+                command,
+                shardArtifactPath,
+              ),
+          ),
+        )
+      : Promise.all(
+          commands.map(({ command, index }) =>
+            runCommandStreaming(command, frontendPath, {
+              onStart: () => updateShardProgress(config, state, task, index, { status: "running", startedAt: now() }),
+            }),
+          ),
+        ));
+  } finally {
+    if (modalBundlePath) rmSync(modalBundlePath, { force: true });
+  }
   const exitCode = results.find((result) => result.exitCode !== 0)?.exitCode ?? 0;
   const run: RunRecord = {
     id: makeId("run"),
@@ -243,6 +288,7 @@ async function runParallelStability(
     throw new Error(failed?.stderr || failed?.stdout || `Parallel stability failed with exit ${exitCode}`);
   }
 
+  finishEvalProgress(config, state, task);
   console.log(
     `[${corpus}] P ${(run.metrics!.medianPrecision * 100).toFixed(1)}% ` +
       `R ${(run.metrics!.medianRecall * 100).toFixed(1)}% ` +
@@ -283,7 +329,34 @@ function evaluationParallelShards(config: FarmConfig): number {
 }
 
 function evaluationCpuLimitPercent(config: FarmConfig): number | undefined {
-  return positiveIntegerFromEnv("EVAL_CPU_LIMIT_PERCENT") ?? positiveInteger(config.evaluation.cpuLimitPercent);
+  const envLimit = positiveIntegerFromEnv("EVAL_CPU_LIMIT_PERCENT");
+  if (envLimit) return envLimit;
+  if (evaluationRemoteBackend(config) === "modal") return undefined;
+  return positiveInteger(config.evaluation.cpuLimitPercent);
+}
+
+function evaluationRemoteBackend(config: FarmConfig): "local" | "modal" {
+  const remote = process.env.EVAL_REMOTE ?? config.evaluation.remoteBackend ?? "local";
+  if (remote !== "local" && remote !== "modal") {
+    throw new Error(`Unsupported EVAL_REMOTE/evaluation.remoteBackend: ${remote}`);
+  }
+  return remote;
+}
+
+function modalCpu(config: FarmConfig): number {
+  return positiveIntegerFromEnv("EVAL_MODAL_CPU") ?? positiveInteger(config.evaluation.modal?.cpu) ?? 4;
+}
+
+function modalMemoryMb(config: FarmConfig): number {
+  return positiveIntegerFromEnv("EVAL_MODAL_MEMORY_MB") ?? positiveInteger(config.evaluation.modal?.memoryMb) ?? 8192;
+}
+
+function modalImage(config: FarmConfig): string {
+  return process.env.EVAL_MODAL_IMAGE ?? config.evaluation.modal?.image ?? "node:22-bookworm";
+}
+
+function modalMaxAttempts(config: FarmConfig): number {
+  return positiveIntegerFromEnv("EVAL_MODAL_MAX_ATTEMPTS") ?? positiveInteger(config.evaluation.modal?.maxAttempts) ?? 3;
 }
 
 function positiveIntegerFromEnv(name: string): number | undefined {
@@ -362,8 +435,19 @@ interface StreamingCommandResult {
   stderr: string;
 }
 
-function runCommandStreaming(command: string, cwd: string): Promise<StreamingCommandResult> {
+interface StreamingCommandOptions {
+  redactArtifact?: boolean;
+  onStart?: () => void;
+  onStdoutLine?: (line: string) => void;
+}
+
+function runCommandStreaming(
+  command: string,
+  cwd: string,
+  options: StreamingCommandOptions = {},
+): Promise<StreamingCommandResult> {
   return new Promise((resolve) => {
+    options.onStart?.();
     const child = spawn(command, {
       cwd,
       env: process.env,
@@ -371,11 +455,19 @@ function runCommandStreaming(command: string, cwd: string): Promise<StreamingCom
     });
     let stdout = "";
     let stderr = "";
+    let redactArtifact = false;
+    let lineBuffer = "";
 
     child.stdout.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
       stdout += text;
-      process.stdout.write(text);
+      const combined = lineBuffer + text;
+      const lines = combined.split(/\r?\n/);
+      lineBuffer = lines.pop() ?? "";
+      for (const line of lines) options.onStdoutLine?.(line);
+      const redacted = options.redactArtifact ? redactArtifactBlock(text, redactArtifact) : { text, redacting: false };
+      redactArtifact = redacted.redacting;
+      process.stdout.write(redacted.text);
     });
     child.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
@@ -383,6 +475,7 @@ function runCommandStreaming(command: string, cwd: string): Promise<StreamingCom
       process.stderr.write(text);
     });
     child.on("close", (code) => {
+      if (lineBuffer) options.onStdoutLine?.(lineBuffer);
       resolve({ exitCode: code ?? 1, stdout, stderr });
     });
     child.on("error", (error) => {
@@ -390,6 +483,257 @@ function runCommandStreaming(command: string, cwd: string): Promise<StreamingCom
       resolve({ exitCode: 1, stdout, stderr });
     });
   });
+}
+
+function redactArtifactBlock(text: string, redacting: boolean): { text: string; redacting: boolean } {
+  const begin = "__AGENT_FARM_ARTIFACT_BEGIN__";
+  const end = "__AGENT_FARM_ARTIFACT_END__";
+  let output = "";
+  let cursor = 0;
+  let state = redacting;
+
+  while (cursor < text.length) {
+    if (state) {
+      const endIndex = text.indexOf(end, cursor);
+      if (endIndex === -1) {
+        return { text: output, redacting: true };
+      }
+      output += `${ansiSafeArtifactNotice()}\n`;
+      cursor = endIndex + end.length;
+      state = false;
+      continue;
+    }
+
+    const beginIndex = text.indexOf(begin, cursor);
+    if (beginIndex === -1) {
+      output += text.slice(cursor);
+      break;
+    }
+
+    output += text.slice(cursor, beginIndex);
+    output += `${begin}\n[artifact base64 redacted]\n`;
+    cursor = beginIndex + begin.length;
+    state = true;
+  }
+
+  return { text: output, redacting: state };
+}
+
+function ansiSafeArtifactNotice(): string {
+  return "__AGENT_FARM_ARTIFACT_END__";
+}
+
+async function runModalShard(
+  config: FarmConfig,
+  task: Task,
+  state: FarmState,
+  repoPath: string,
+  bundlePath: string,
+  corpus: string,
+  repeats: number,
+  shardIndex: number,
+  sampleCount: number,
+  shardCorpus: string,
+  stabilityRunCommand: string,
+  shardArtifactPath: string,
+): Promise<StreamingCommandResult> {
+  const remoteArtifact = relative(join(repoPath, "web/frontend"), shardArtifactPath);
+  const modalScriptPath = resolve(process.cwd(), "scripts/modal_eval_shard.py");
+  const maxAttempts = modalMaxAttempts(config);
+  let lastResult: StreamingCommandResult | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const modalCommand = [
+      "modal run",
+      shellQuote(modalScriptPath),
+      `--bundle ${shellQuote(bundlePath)}`,
+      `--run-command ${shellQuote(stabilityRunCommand)}`,
+      `--artifact ${shellQuote(remoteArtifact)}`,
+      `--cpu ${modalCpu(config)}`,
+      `--memory-mb ${modalMemoryMb(config)}`,
+      `--image ${shellQuote(modalImage(config))}`,
+      `--timeout-seconds ${stabilityTimeoutSeconds(corpus, repeats) + 15 * 60}`,
+    ].join(" ");
+
+    console.log(
+      `\n[${task.id}] modal shard ${shardIndex + 1}/${task.evalProgress?.shardCount ?? "?"} ` +
+        `attempt ${attempt}/${maxAttempts} (${sampleCount} samples): ${shardCorpus}`,
+    );
+    const result = await runCommandStreaming(modalCommand, repoPath, {
+      redactArtifact: true,
+      onStart: () =>
+        updateShardProgress(config, state, task, shardIndex, {
+          status: "launching",
+          startedAt: now(),
+          attempt,
+          summary: `attempt ${attempt}/${maxAttempts}: ${sampleCount} samples`,
+        }),
+      onStdoutLine: (line) => {
+        const url = line.match(/https:\/\/modal\.com\/\S+/)?.[0];
+        if (url) {
+          updateShardProgress(config, state, task, shardIndex, {
+            status: "running",
+            modalAppUrl: url,
+            attempt,
+            summary: `attempt ${attempt}/${maxAttempts}: ${sampleCount} samples on Modal`,
+          });
+        }
+        const phase = line.match(/\[modal-shard\] phase=([^\s]+)/)?.[1];
+        if (phase) {
+          updateShardProgress(config, state, task, shardIndex, {
+            status: "running",
+            attempt,
+            summary: `attempt ${attempt}/${maxAttempts}: ${phase}`,
+          });
+        }
+        const summary = line.match(/^Stable-pass: .+$/)?.[0] ?? line.match(/^Median SeqAcc:\s+.+$/)?.[0];
+        if (summary) {
+          updateShardProgress(config, state, task, shardIndex, {
+            status: "running",
+            attempt,
+            summary,
+          });
+        }
+      },
+    });
+
+    const artifactJson =
+      result.exitCode === 0
+        ? extractModalArtifact(result.stdout)
+        : undefined;
+    if (result.exitCode === 0 && artifactJson) {
+      writeJson(shardArtifactPath, JSON.parse(artifactJson));
+      updateShardProgress(config, state, task, shardIndex, {
+        status: "completed",
+        finishedAt: now(),
+        attempt,
+        summary: `wrote ${relative(repoPath, shardArtifactPath)}`,
+      });
+      return result;
+    }
+
+    lastResult =
+      result.exitCode === 0
+        ? {
+            ...result,
+            exitCode: 1,
+            stderr: `${result.stderr}\nModal shard finished but did not return an artifact.`,
+          }
+        : result;
+
+    const failureSummary = modalFailureSummary(lastResult);
+    const willRetry = attempt < maxAttempts;
+    updateShardProgress(config, state, task, shardIndex, {
+      status: willRetry ? "launching" : "failed",
+      finishedAt: willRetry ? undefined : now(),
+      attempt,
+      summary: `${willRetry ? "retrying" : "failed"} ${attempt}/${maxAttempts}: ${failureSummary}`,
+    });
+    console.warn(
+      `[${task.id}] modal shard ${shardIndex + 1} attempt ${attempt}/${maxAttempts} failed: ${failureSummary}`,
+    );
+    if (willRetry) await sleep(10_000 * attempt);
+  }
+
+  return lastResult ?? { exitCode: 1, stdout: "", stderr: "Modal shard failed before starting." };
+}
+
+function startEvalProgress(
+  config: FarmConfig,
+  state: FarmState,
+  task: Task,
+  corpus: string,
+  repeats: number,
+  backend: "local" | "modal",
+  shards: Array<{ index: number; sampleCount: number }>,
+): void {
+  const timestamp = now();
+  task.evalProgress = {
+    corpus,
+    repeats,
+    backend,
+    shardCount: shards.length,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    completedShards: 0,
+    failedShards: 0,
+    shards: shards.map(({ index, sampleCount }) => ({ index, sampleCount, status: "pending" })),
+  };
+  task.updatedAt = timestamp;
+  upsertTask(state, task);
+  saveState(config.statePath, state);
+}
+
+function updateShardProgress(
+  config: FarmConfig,
+  state: FarmState,
+  task: Task,
+  index: number,
+  patch: Partial<EvalShardProgress>,
+): void {
+  if (!task.evalProgress) return;
+  const shard = task.evalProgress.shards.find((candidate) => candidate.index === index);
+  if (!shard) return;
+  Object.assign(shard, patch);
+  const timestamp = now();
+  task.evalProgress.updatedAt = timestamp;
+  task.evalProgress.completedShards = task.evalProgress.shards.filter((candidate) => candidate.status === "completed").length;
+  task.evalProgress.failedShards = task.evalProgress.shards.filter((candidate) => candidate.status === "failed").length;
+  task.updatedAt = timestamp;
+  upsertTask(state, task);
+  saveState(config.statePath, state);
+}
+
+function finishEvalProgress(config: FarmConfig, state: FarmState, task: Task): void {
+  if (!task.evalProgress) return;
+  task.evalProgress.updatedAt = now();
+  task.updatedAt = task.evalProgress.updatedAt;
+  upsertTask(state, task);
+  saveState(config.statePath, state);
+}
+
+function createModalBundle(repoPath: string, bundlePath: string): void {
+  rmSync(bundlePath, { force: true });
+  mkdirSync(dirname(bundlePath), { recursive: true });
+  const result = runCommand(
+    [
+      "tar -chzf",
+      shellQuote(bundlePath),
+      "--exclude='./.git'",
+      "--exclude='./.worktrees'",
+      "--exclude='./node_modules'",
+      "--exclude='./web/frontend/node_modules'",
+      "--exclude='./web/frontend/test/agent-farm'",
+      ".",
+    ].join(" "),
+    repoPath,
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout);
+  }
+}
+
+function extractModalArtifact(stdout: string): string | undefined {
+  const match = stdout.match(/__AGENT_FARM_ARTIFACT_BEGIN__\s*([A-Za-z0-9+/=\s]+?)\s*__AGENT_FARM_ARTIFACT_END__/);
+  if (!match?.[1]) return undefined;
+  return Buffer.from(match[1].replace(/\s/g, ""), "base64").toString("utf-8");
+}
+
+function modalFailureSummary(result: StreamingCommandResult): string {
+  const redactedStdout = redactArtifactBlock(result.stdout, false).text;
+  const lines = `${result.stderr}\n${redactedStdout}`
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trim())
+    .filter((line) => line && !line.includes("[artifact base64 redacted]"));
+  return (lines.slice(-3).join(" | ") || `exit ${result.exitCode}`).slice(0, 240);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
 function mergeStabilityReports(corpus: string, repeats: number, reports: StabilityReport[]): StabilityReport {
