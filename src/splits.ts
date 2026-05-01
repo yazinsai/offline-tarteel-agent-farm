@@ -24,7 +24,7 @@ export function buildSplits(config: FarmConfig): void {
     ? readJson<StabilityReport>(baselinePath)
     : null;
 
-  const devIds = chooseDevIds(manifest.samples, baseline);
+  const devIds = chooseDevIds(manifest.samples, baseline, config.evaluation.devSampleLimit ?? 72);
   const dev = manifest.samples.filter((sample) => devIds.has(sample.id));
   const holdout = manifest.samples.filter((sample) => !devIds.has(sample.id));
 
@@ -35,7 +35,11 @@ export function buildSplits(config: FarmConfig): void {
   console.log(`Wrote ${config.evaluation.holdoutCorpus}: ${holdout.length} samples`);
 }
 
-function chooseDevIds(samples: ManifestSample[], baseline: StabilityReport | null): Set<string> {
+function chooseDevIds(
+  samples: ManifestSample[],
+  baseline: StabilityReport | null,
+  targetSize: number,
+): Set<string> {
   const dev = new Set<string>();
   const byId = new Map(samples.map((sample) => [sample.id, sample]));
 
@@ -47,14 +51,14 @@ function chooseDevIds(samples: ManifestSample[], baseline: StabilityReport | nul
       .filter((sample) => sample.exactClassification === "exact-flaky")
       .sort(byStableSortKey);
 
-    for (const sample of exactFails.slice(0, 28)) dev.add(sample.id);
-    for (const sample of exactFlaky.slice(0, 24)) dev.add(sample.id);
+    for (const sample of exactFails.slice(0, Math.ceil(targetSize * 0.4))) dev.add(sample.id);
+    for (const sample of exactFlaky.slice(0, Math.ceil(targetSize * 0.25))) dev.add(sample.id);
   }
 
-  addStratum(dev, samples, (sample) => sample.category === "long", 12);
-  addStratum(dev, samples, (sample) => sample.category === "multi", 12);
-  addStratum(dev, samples, (sample) => sample.source.toLowerCase().includes("tlog"), 16);
-  addStratum(dev, samples, (sample) => byId.has(sample.id), 72);
+  addStratum(dev, samples, (sample) => sample.category === "long", Math.ceil(targetSize * 0.5));
+  addStratum(dev, samples, (sample) => sample.category === "multi", Math.ceil(targetSize * 0.67));
+  addStratum(dev, samples, (sample) => sample.source.toLowerCase().includes("tlog"), Math.ceil(targetSize * 0.85));
+  addStratum(dev, samples, (sample) => byId.has(sample.id), targetSize);
 
   return dev;
 }

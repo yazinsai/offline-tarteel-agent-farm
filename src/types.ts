@@ -17,6 +17,7 @@ export interface FarmConfig {
     minPrecision: number;
     v2SeqAccRegressionTolerance: number;
     devCorpus: string;
+    devSampleLimit?: number;
     holdoutCorpus: string;
     fullCorpus: string;
     repeatsDev: number;

@@ -15,6 +15,7 @@
     "minPrecision": 0.72,
     "v2SeqAccRegressionTolerance": 0.01,
     "devCorpus": "test_corpus_v3_dev",
+    "devSampleLimit": 12,
     "holdoutCorpus": "test_corpus_v3_holdout",
     "fullCorpus": "test_corpus_v3",
     "repeatsDev": 1,
