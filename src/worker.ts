@@ -64,7 +64,7 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   for await (const event of run.stream()) {
     const line = typeof event === "string" ? event : JSON.stringify(event);
     log += `${line}\n`;
-    process.stdout.write(line);
+    process.stdout.write(`${line}\n`);
   }
   writeFileSync(logPath, log);
 

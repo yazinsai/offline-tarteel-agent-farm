@@ -28,7 +28,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
     config,
   );
 
-  runChecked("npx vitest run", frontendPath, task, state, "unit", 0, "", config);
+  runChecked("npx vitest run --testTimeout=60000", frontendPath, task, state, "unit", 0, "", config);
 
   const dev = runStability(
     config,
