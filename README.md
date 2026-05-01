@@ -110,6 +110,12 @@ ssh dokku-server 'dokku run offline-tarteel-agent-farm npm run status -- --confi
 ssh dokku-server 'dokku run offline-tarteel-agent-farm npm run build-splits -- --config config.dokku.json'
 ```
 
+Dokku evals default to one shard and `cpuLimitPercent: 70` so ONNX stability runs do not monopolize the box. Override temporarily if you want a faster burn:
+
+```bash
+ssh dokku-server 'dokku run offline-tarteel-agent-farm env EVAL_PARALLEL_SHARDS=4 EVAL_CPU_LIMIT_PERCENT=100 npm run eval -- --config config.dokku.json --task <task-id>'
+```
+
 ## Cloud Mode
 
 Set this in `config.json`:

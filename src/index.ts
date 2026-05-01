@@ -92,6 +92,8 @@ async function runDaemon(
 ): Promise<void> {
   const useAi = hasFlag(args, "--ai");
   const sleepSeconds = Number(valueAfter(args, "--sleep-seconds") ?? "60");
+  recoverInterruptedEvaluations(state);
+  saveState(config.statePath, state);
 
   console.log(`Starting daemon loop. sleep=${sleepSeconds}s aiPlanning=${useAi}`);
   for (;;) {
@@ -116,6 +118,7 @@ async function runLoop(
   const useAi = hasFlag(args, "--ai");
   const cycles = Number(valueAfter(args, "--cycles") ?? "1");
 
+  recoverInterruptedEvaluations(state);
   buildSplits(config);
   if (state.tasks.every((task) => task.status !== "queued")) {
     await planTasks(config, state, useAi);
@@ -158,6 +161,16 @@ function printStatus(state: ReturnType<typeof loadState>): void {
     for (const task of latest) {
       console.log(`- ${task.id} [${task.status}] ${task.track}: ${task.hypothesis}`);
     }
+  }
+}
+
+function recoverInterruptedEvaluations(state: ReturnType<typeof loadState>): void {
+  const timestamp = new Date().toISOString();
+  for (const task of state.tasks) {
+    if (task.status !== "evaluating") continue;
+    task.status = "needs-eval";
+    task.updatedAt = timestamp;
+    task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered interrupted evaluation at ${timestamp}.`;
   }
 }
 

@@ -128,7 +128,7 @@ function runStability(
   const artifactPath = join(artifactDir, `${corpus}-r${repeats}.json`);
   const manifestPath = join(repoPath, "benchmark", corpus, "manifest.json");
   const manifest = readJson<Manifest>(manifestPath);
-  const shardCount = Math.min(config.evaluation.parallelShards ?? 1, manifest.samples.length);
+  const shardCount = Math.min(evaluationParallelShards(config), manifest.samples.length);
 
   if (shardCount > 1) {
     return runParallelStability(
@@ -146,14 +146,7 @@ function runStability(
     );
   }
 
-  const command = [
-    `timeout -k 30s ${stabilityTimeoutSeconds(corpus, repeats)}`,
-    "npx tsx test/stability-report.ts",
-    "--focus=exact",
-    `--repeats=${repeats}`,
-    `--corpus=${corpus}`,
-    `--json=${relative(frontendPath, artifactPath)}`,
-  ].join(" ");
+  const command = stabilityCommand(config, corpus, repeats, corpus, relative(frontendPath, artifactPath));
 
   return runChecked(command, frontendPath, task, state, corpus, repeats, artifactPath, config);
 }
@@ -199,14 +192,13 @@ async function runParallelStability(
     const shardArtifact = join(artifactDir, `${corpus}-r${repeats}-shard-${index}.json`);
     return {
       artifactPath: shardArtifact,
-      command: [
-        `timeout -k 30s ${stabilityTimeoutSeconds(corpus, repeats)}`,
-        "npx tsx test/stability-report.ts",
-        "--focus=exact",
-        `--repeats=${repeats}`,
-        `--corpus=${shardCorpus}`,
-        `--json=${relative(frontendPath, shardArtifact)}`,
-      ].join(" "),
+      command: stabilityCommand(
+        config,
+        corpus,
+        repeats,
+        shardCorpus,
+        relative(frontendPath, shardArtifact),
+      ),
     };
   });
 
@@ -265,6 +257,43 @@ function stabilityTimeoutSeconds(corpus: string, repeats: number): number {
   if (corpus.includes("_holdout")) return Math.max(90 * 60, repeats * 30 * 60);
   if (corpus === "test_corpus_v2") return Math.max(45 * 60, repeats * 15 * 60);
   return Math.max(6 * 60 * 60, repeats * 60 * 60);
+}
+
+function stabilityCommand(
+  config: FarmConfig,
+  timeoutCorpus: string,
+  repeats: number,
+  corpusArg: string,
+  artifactArg: string,
+): string {
+  const cpuLimitPercent = evaluationCpuLimitPercent(config);
+  return [
+    `timeout -k 30s ${stabilityTimeoutSeconds(timeoutCorpus, repeats)}`,
+    ...(cpuLimitPercent ? [`cpulimit -l ${cpuLimitPercent} --`] : []),
+    "npx tsx test/stability-report.ts",
+    "--focus=exact",
+    `--repeats=${repeats}`,
+    `--corpus=${corpusArg}`,
+    `--json=${artifactArg}`,
+  ].join(" ");
+}
+
+function evaluationParallelShards(config: FarmConfig): number {
+  return positiveIntegerFromEnv("EVAL_PARALLEL_SHARDS") ?? positiveInteger(config.evaluation.parallelShards) ?? 1;
+}
+
+function evaluationCpuLimitPercent(config: FarmConfig): number | undefined {
+  return positiveIntegerFromEnv("EVAL_CPU_LIMIT_PERCENT") ?? positiveInteger(config.evaluation.cpuLimitPercent);
+}
+
+function positiveIntegerFromEnv(name: string): number | undefined {
+  return positiveInteger(process.env[name]);
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.floor(parsed);
 }
 
 function runChecked(
