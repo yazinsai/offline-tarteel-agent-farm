@@ -9,6 +9,8 @@ RUN apt-get update \
     python3 \
   && rm -rf /var/lib/apt/lists/*
 
+RUN git config --system --add safe.directory '*'
+
 WORKDIR /app
 
 COPY package*.json ./
