@@ -16,4 +16,4 @@ RUN npm ci
 
 COPY . .
 
-CMD ["npm", "run", "daemon", "--", "--config", "config.dokku.json", "--sleep-seconds", "60"]
+CMD ["npm", "run", "daemon", "--", "--config", "config.dokku.json", "--sleep-seconds", "60", "--ai"]
