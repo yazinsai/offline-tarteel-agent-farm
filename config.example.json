@@ -14,6 +14,7 @@
     "targetSeqAcc": 0.9,
     "minPrecision": 0.72,
     "v2SeqAccRegressionTolerance": 0.01,
+    "parallelShards": 4,
     "devCorpus": "test_corpus_v3_dev",
     "devSampleLimit": 72,
     "holdoutCorpus": "test_corpus_v3_holdout",
