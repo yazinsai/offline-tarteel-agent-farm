@@ -115,6 +115,13 @@ async function runLoop(
   }
 
   for (let i = 0; i < cycles; i++) {
+    const evalTask = state.tasks.find((candidate) => candidate.status === "needs-eval");
+    if (evalTask) {
+      await evaluateTask(config, state, evalTask);
+      judgeTask(config, state, evalTask);
+      continue;
+    }
+
     const task = state.tasks.find((candidate) => candidate.status === "queued");
     if (!task) {
       console.log("No queued tasks left.");
