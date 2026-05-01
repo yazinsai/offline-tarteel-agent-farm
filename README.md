@@ -148,7 +148,9 @@ Cloud mode starts a Cursor cloud run and records `cursorRunId` / `cursorAgentId`
 
 ## Planning Memory
 
-`runs/state.json` stores every task, run, metric, and judge decision. AI planning (`npm run plan -- --ai`) includes the last 30 attempts and their lessons in the planner prompt, and the planner skips exact duplicate hypotheses. Seed planning (`npm run plan`) only queues the built-in seed tracks that have not already been queued.
+`runs/state.json` stores every task, run, metric, worker handoff, guardrail result, optimizer score, and judge decision. AI planning (`npm run plan -- --ai`) includes the last 30 attempts, v2/v3 deltas, worker mechanisms, failure/regression clusters, and lessons in the planner prompt, and the planner skips exact duplicate hypotheses. Seed planning (`npm run plan`) only queues the built-in seed tracks that have not already been queued.
+
+Workers are expected to write `.agent-farm/result.json` in their target worktree before finishing. The orchestrator records that structured handoff and skips expensive gate/full evaluation when a worker self-rejects or reports a clearly bad dev-corpus signal.
 
 ## Analysis
 
@@ -185,5 +187,6 @@ The judge accepts only when:
 - v3 finalSequence median precision is above `evaluation.minPrecision`
 - v2 finalSequence ExactSetAcc does not regress beyond `evaluation.v2SeqAccRegressionTolerance`
 - sample regressions are not broad or suspicious
+- guardrails find no sample/corpus/source-specific runtime hacks or hardcoded verse lists
 
 Everything else is either `promising` or `rejected`; both keep raw artifacts. ExactSetAcc means deduped set equality with order ignored. OrderedSeqAcc means exact ordered unique sequence equality. Raw commit metrics remain visible for debugging streaming emissions, but finalSequence is the product contract.

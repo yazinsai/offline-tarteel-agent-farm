@@ -139,8 +139,12 @@ async function runLoop(
     }
 
     await startWorkerForTask(config, state, task);
-    await evaluateTask(config, state, task);
-    judgeTask(config, state, task);
+    const workedTask = findTaskOrThrow(state, task.id);
+    if (workedTask.status === "self-rejected") continue;
+    await evaluateTask(config, state, workedTask);
+    const evaluatedTask = findTaskOrThrow(state, task.id);
+    if (evaluatedTask.status === "self-rejected") continue;
+    judgeTask(config, state, evaluatedTask);
   }
 }
 

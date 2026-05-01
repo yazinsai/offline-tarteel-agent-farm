@@ -20,6 +20,21 @@ import { runCommand } from "./repo.js";
 import { addRun, makeId, now, saveState, upsertTask } from "./state.js";
 
 export async function evaluateTask(config: FarmConfig, state: FarmState, task: Task): Promise<void> {
+  if (task.status === "self-rejected") {
+    console.log(`[${task.id}] Skipping eval: ${task.notes ?? "worker self-rejected"}`);
+    return;
+  }
+  if (task.workerResult?.devMetrics && task.workerResult.devMetrics.finalExactSet < 0.45) {
+    task.status = "self-rejected";
+    task.notes =
+      `Skipped expensive eval after worker dev Final ExactSet ` +
+      `${(task.workerResult.devMetrics.finalExactSet * 100).toFixed(1)}% < 45.0%.`;
+    task.updatedAt = now();
+    upsertTask(state, task);
+    saveState(config.statePath, state);
+    return;
+  }
+
   const repoPath = task.worktreePath ?? config.targetRepoPath;
   const frontendPath = join(repoPath, "web/frontend");
   const artifactDir = join(frontendPath, "test", "agent-farm", task.id);

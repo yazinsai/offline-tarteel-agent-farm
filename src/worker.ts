@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { FarmConfig, FarmState, Task } from "./types.js";
+import type { FarmConfig, FarmState, Task, WorkerResult } from "./types.js";
 import { createWorktree } from "./repo.js";
+import { readJson } from "./fs.js";
 import { now, saveState, upsertTask } from "./state.js";
 
 export async function startNextWorker(config: FarmConfig, state: FarmState): Promise<void> {
@@ -68,7 +69,17 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   }
   writeFileSync(logPath, log);
 
-  task.status = "needs-eval";
+  const workerResult = readWorkerResult(worktreePath, task.id);
+  if (workerResult) {
+    task.workerResult = workerResult;
+  }
+
+  if (workerResult?.shouldReject) {
+    task.status = "self-rejected";
+    task.notes = workerResult.rejectionReason ?? "Worker self-rejected after dev evaluation.";
+  } else {
+    task.status = "needs-eval";
+  }
   task.updatedAt = now();
   upsertTask(state, task);
   saveState(config.statePath, state);
@@ -118,4 +129,41 @@ Evaluation ladder expected by the orchestrator:
 - Final claim: ${config.evaluation.fullCorpus}, ${config.evaluation.repeatsFinal} repeats.
 
 When done, leave the branch/worktree ready for the orchestrator's eval command. Do not merge to main.`;
+}
+
+function readWorkerResult(worktreePath: string, taskId: string): WorkerResult | undefined {
+  const resultPath = join(worktreePath, ".agent-farm", "result.json");
+  if (!existsSync(resultPath)) {
+    console.warn(`Worker did not write ${resultPath}`);
+    return undefined;
+  }
+
+  const parsed = readJson<Partial<WorkerResult>>(resultPath);
+  if (parsed.taskId !== taskId) {
+    throw new Error(`Worker result taskId mismatch: expected ${taskId}, got ${parsed.taskId ?? "missing"}`);
+  }
+  if (
+    typeof parsed.hypothesis !== "string" ||
+    typeof parsed.mechanism !== "string" ||
+    !Array.isArray(parsed.changedFiles) ||
+    !Array.isArray(parsed.commandsRun) ||
+    typeof parsed.expectedFailureModeAddressed !== "string" ||
+    typeof parsed.shouldReject !== "boolean"
+  ) {
+    throw new Error(`Invalid worker result schema at ${resultPath}`);
+  }
+
+  return {
+    taskId: parsed.taskId,
+    hypothesis: parsed.hypothesis,
+    mechanism: parsed.mechanism,
+    featureFlag: parsed.featureFlag,
+    changedFiles: parsed.changedFiles,
+    commandsRun: parsed.commandsRun,
+    devArtifact: parsed.devArtifact,
+    devMetrics: parsed.devMetrics,
+    expectedFailureModeAddressed: parsed.expectedFailureModeAddressed,
+    shouldReject: parsed.shouldReject,
+    rejectionReason: parsed.rejectionReason,
+  };
 }

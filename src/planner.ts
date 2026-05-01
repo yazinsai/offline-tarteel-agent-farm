@@ -6,6 +6,14 @@ import { normalizeStabilityMetrics } from "./types.js";
 import type { SDKMessage } from "@cursor/sdk";
 import { makeId, now, upsertTask } from "./state.js";
 
+interface PlanSpec {
+  track: string;
+  hypothesis: string;
+  mechanism?: string;
+  failureMode?: string;
+  expectedMetricMovement?: string;
+}
+
 const seedHypotheses = [
   {
     track: "beam-trie",
@@ -56,7 +64,7 @@ export async function planTasks(config: FarmConfig, state: FarmState, useAi: boo
       status: "queued",
       track: spec.track,
       hypothesis: spec.hypothesis,
-      prompt: buildWorkerPrompt(spec.track, spec.hypothesis),
+      prompt: buildWorkerPrompt(spec),
       branch,
       createdAt: now(),
       updatedAt: now(),
@@ -74,7 +82,7 @@ export async function planTasks(config: FarmConfig, state: FarmState, useAi: boo
 async function askPlanner(
   config: FarmConfig,
   state: FarmState,
-): Promise<Array<{ track: string; hypothesis: string }>> {
+): Promise<PlanSpec[]> {
   const { Agent } = await import("@cursor/sdk");
   const promptTemplate = readFileSync(join(process.cwd(), "prompts/planner.md"), "utf-8");
   const prompt = promptTemplate
@@ -118,14 +126,20 @@ function modelFor(config: FarmConfig, role: "planner" | "worker" | "judge"): str
   return config.models?.[role] ?? config.model;
 }
 
-function buildWorkerPrompt(track: string, hypothesis: string): string {
+function buildWorkerPrompt(spec: PlanSpec): string {
   const template = readFileSync(join(process.cwd(), "prompts/worker.md"), "utf-8");
+  const plannerDetails = [
+    spec.mechanism ? `Mechanism: ${spec.mechanism}` : "",
+    spec.failureMode ? `Target failure mode: ${spec.failureMode}` : "",
+    spec.expectedMetricMovement ? `Expected metric movement: ${spec.expectedMetricMovement}` : "",
+  ].filter(Boolean).join("\n");
   return template
-    .replaceAll("{{TRACK}}", track)
-    .replaceAll("{{HYPOTHESIS}}", hypothesis);
+    .replaceAll("{{TRACK}}", spec.track)
+    .replaceAll("{{HYPOTHESIS}}", spec.hypothesis)
+    .replaceAll("{{PLANNER_DETAILS}}", plannerDetails || "No additional planner details.");
 }
 
-function nextUnseenSeed(state: FarmState): Array<{ track: string; hypothesis: string }> {
+function nextUnseenSeed(state: FarmState): PlanSpec[] {
   const seen = new Set(
     state.tasks.map((task) => normalizeHypothesis(task.track, task.hypothesis)),
   );
@@ -157,7 +171,18 @@ function summarizeHistory(state: FarmState): string {
     return [
       `- ${task.id} [${decision?.verdict ?? task.status}] ${task.track}`,
       `  hypothesis: ${task.hypothesis}`,
+      task.workerResult ? `  mechanism: ${task.workerResult.mechanism}` : "",
       runs ? `  metrics: ${runs}` : "  metrics: none",
+      task.analysis ? `  optimizer: ${task.analysis.lesson}` : "",
+      task.analysis?.improvementClusters.length
+        ? `  improved clusters: ${formatClusters(task.analysis.improvementClusters)}`
+        : "",
+      task.analysis?.regressionClusters.length
+        ? `  regression clusters: ${formatClusters(task.analysis.regressionClusters)}`
+        : "",
+      task.guardrails && !task.guardrails.passed
+        ? `  guardrails: ${task.guardrails.findings.length} finding(s)`
+        : "",
       decision ? `  lesson: ${decision.reason}` : task.notes ? `  note: ${task.notes}` : "",
     ].filter(Boolean).join("\n");
   });
@@ -165,11 +190,18 @@ function summarizeHistory(state: FarmState): string {
   return lines.join("\n");
 }
 
+function formatClusters(clusters: Array<{ category: string; count: number }>): string {
+  return clusters
+    .slice(0, 4)
+    .map((cluster) => `${cluster.category}=${cluster.count}`)
+    .join(", ");
+}
+
 function normalizeHypothesis(track: string, hypothesis: string): string {
   return `${track}:${hypothesis}`.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function parseJsonArray(text: string): Array<{ track: string; hypothesis: string }> {
+function parseJsonArray(text: string): PlanSpec[] {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = fenced ? fenced[1] : text;
   const start = raw.indexOf("[");
@@ -188,7 +220,16 @@ function parseJsonArray(text: string): Array<{ track: string; hypothesis: string
         typeof item.track === "string" &&
         typeof item.hypothesis === "string"
       ) {
-        return [{ track: item.track, hypothesis: item.hypothesis }];
+        return [{
+          track: item.track,
+          hypothesis: item.hypothesis,
+          mechanism: "mechanism" in item && typeof item.mechanism === "string" ? item.mechanism : undefined,
+          failureMode: "failureMode" in item && typeof item.failureMode === "string" ? item.failureMode : undefined,
+          expectedMetricMovement:
+            "expectedMetricMovement" in item && typeof item.expectedMetricMovement === "string"
+              ? item.expectedMetricMovement
+              : undefined,
+        }];
       }
       return [];
     });

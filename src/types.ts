@@ -12,6 +12,8 @@ export interface FarmConfig {
   model: string;
   mode: AgentMode;
   maxConcurrentWorkers: number;
+  maxConcurrentEvaluations?: number;
+  minQueuedTasks?: number;
   statePath: string;
   baselineReports: {
     v2: string;
@@ -48,6 +50,7 @@ export type TaskStatus =
   | "promising"
   | "accepted"
   | "rejected"
+  | "self-rejected"
   | "failed";
 
 export interface Task {
@@ -61,9 +64,69 @@ export interface Task {
   cursorRunId?: string;
   cursorAgentId?: string;
   evalProgress?: EvalProgress;
+  workerResult?: WorkerResult;
+  analysis?: TaskAnalysis;
+  guardrails?: GuardrailResult;
   createdAt: string;
   updatedAt: string;
   notes?: string;
+}
+
+export interface WorkerResult {
+  taskId: string;
+  hypothesis: string;
+  mechanism: string;
+  featureFlag?: string;
+  changedFiles: string[];
+  commandsRun: string[];
+  devArtifact?: string;
+  devMetrics?: {
+    precision: number;
+    recall: number;
+    finalExactSet: number;
+    finalOrderedSeq: number;
+  };
+  expectedFailureModeAddressed: string;
+  shouldReject: boolean;
+  rejectionReason?: string;
+}
+
+export interface TaskAnalysis {
+  score: number;
+  v3: AnalysisMetricDelta;
+  v2: AnalysisMetricDelta;
+  failureClusters: AnalysisCluster[];
+  improvementClusters: AnalysisCluster[];
+  regressionClusters: AnalysisCluster[];
+  lesson: string;
+  suspicious: string[];
+}
+
+export interface AnalysisMetricDelta {
+  precision: number;
+  recall: number;
+  finalExactSet: number;
+  finalOrderedSeq: number;
+  rawCommitPrecision?: number;
+  rawCommitRecall?: number;
+  rawCommitExactSet?: number;
+  rawCommitOrderedSeq?: number;
+}
+
+export interface AnalysisCluster {
+  category: string;
+  count: number;
+}
+
+export interface GuardrailResult {
+  passed: boolean;
+  findings: GuardrailFinding[];
+}
+
+export interface GuardrailFinding {
+  file: string;
+  reason: string;
+  match: string;
 }
 
 export interface EvalProgress {

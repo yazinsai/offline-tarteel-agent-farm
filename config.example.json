@@ -10,6 +10,8 @@
   "model": "default",
   "mode": "local",
   "maxConcurrentWorkers": 2,
+  "maxConcurrentEvaluations": 1,
+  "minQueuedTasks": 8,
   "statePath": "runs/state.json",
   "baselineReports": {
     "v2": "web/frontend/test/stab-gate-on-v2.json",
