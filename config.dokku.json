@@ -2,6 +2,11 @@
   "targetRepoPath": "/data/offline-tarteel",
   "targetRepoUrl": "git@github.com:yazinsai/offline-tarteel.git",
   "baseBranch": "main",
+  "models": {
+    "planner": "gpt-5.5",
+    "worker": "gpt-5.5",
+    "judge": "gpt-5.5"
+  },
   "model": "gpt-5.5",
   "mode": "local",
   "maxConcurrentWorkers": 1,

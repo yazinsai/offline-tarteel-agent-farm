@@ -51,7 +51,7 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   const { Agent } = await import("@cursor/sdk");
   const agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,
-    model: { id: config.model },
+    model: { id: modelFor(config, "worker") },
     local: { cwd: worktreePath },
   } as never);
 
@@ -82,7 +82,7 @@ async function startCloudWorker(config: FarmConfig, state: FarmState, task: Task
   const { Agent } = await import("@cursor/sdk");
   const agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,
-    model: { id: config.model },
+    model: { id: modelFor(config, "worker") },
     cloud: {
       repos: [{ url: config.targetRepoUrl, startingRef: config.baseBranch }],
       autoCreatePR: false,
@@ -99,6 +99,10 @@ async function startCloudWorker(config: FarmConfig, state: FarmState, task: Task
   console.log(`Started cloud worker for ${task.id}`);
   console.log(`runId=${run.id}`);
   console.log(`agentId=${run.agentId}`);
+}
+
+function modelFor(config: FarmConfig, role: "planner" | "worker" | "judge"): string {
+  return config.models?.[role] ?? config.model;
 }
 
 function fullWorkerPrompt(config: FarmConfig, task: Task, cwd: string): string {

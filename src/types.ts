@@ -4,6 +4,11 @@ export interface FarmConfig {
   targetRepoPath: string;
   targetRepoUrl?: string;
   baseBranch: string;
+  models?: {
+    planner?: string;
+    worker?: string;
+    judge?: string;
+  };
   model: string;
   mode: AgentMode;
   maxConcurrentWorkers: number;

@@ -76,7 +76,7 @@ async function askPlanner(
 
   const agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,
-    model: { id: config.model },
+    model: { id: modelFor(config, "planner") },
     local: { cwd: config.targetRepoPath },
   } as never);
 
@@ -88,6 +88,10 @@ async function askPlanner(
 
   const parsed = parseJsonArray(text);
   return parsed.length > 0 ? parsed : nextUnseenSeed(state);
+}
+
+function modelFor(config: FarmConfig, role: "planner" | "worker" | "judge"): string {
+  return config.models?.[role] ?? config.model;
 }
 
 function buildWorkerPrompt(track: string, hypothesis: string): string {
