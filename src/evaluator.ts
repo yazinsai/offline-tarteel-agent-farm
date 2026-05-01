@@ -121,7 +121,7 @@ function runStability(
 ): RunRecord {
   const artifactPath = join(artifactDir, `${corpus}-r${repeats}.json`);
   const command = [
-    `timeout --foreground ${stabilityTimeoutSeconds(corpus, repeats)}`,
+    `timeout -k 30s ${stabilityTimeoutSeconds(corpus, repeats)}`,
     "npx tsx test/stability-report.ts",
     "--focus=exact",
     `--repeats=${repeats}`,
