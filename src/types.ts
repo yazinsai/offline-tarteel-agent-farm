@@ -59,9 +59,32 @@ export interface Task {
   worktreePath?: string;
   cursorRunId?: string;
   cursorAgentId?: string;
+  evalProgress?: EvalProgress;
   createdAt: string;
   updatedAt: string;
   notes?: string;
+}
+
+export interface EvalProgress {
+  corpus: string;
+  repeats: number;
+  backend: "local" | "modal";
+  shardCount: number;
+  startedAt: string;
+  updatedAt: string;
+  completedShards: number;
+  failedShards: number;
+  shards: EvalShardProgress[];
+}
+
+export interface EvalShardProgress {
+  index: number;
+  sampleCount: number;
+  status: "pending" | "launching" | "running" | "completed" | "failed";
+  startedAt?: string;
+  finishedAt?: string;
+  modalAppUrl?: string;
+  summary?: string;
 }
 
 export interface RunRecord {
