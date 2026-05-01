@@ -121,6 +121,7 @@ function runStability(
 ): RunRecord {
   const artifactPath = join(artifactDir, `${corpus}-r${repeats}.json`);
   const command = [
+    `timeout --foreground ${stabilityTimeoutSeconds(corpus, repeats)}`,
     "npx tsx test/stability-report.ts",
     "--focus=exact",
     `--repeats=${repeats}`,
@@ -129,6 +130,13 @@ function runStability(
   ].join(" ");
 
   return runChecked(command, frontendPath, task, state, corpus, repeats, artifactPath, config);
+}
+
+function stabilityTimeoutSeconds(corpus: string, repeats: number): number {
+  if (corpus.includes("_dev")) return 30 * 60;
+  if (corpus.includes("_holdout")) return Math.max(90 * 60, repeats * 30 * 60);
+  if (corpus === "test_corpus_v2") return Math.max(45 * 60, repeats * 15 * 60);
+  return Math.max(6 * 60 * 60, repeats * 60 * 60);
 }
 
 function runChecked(
