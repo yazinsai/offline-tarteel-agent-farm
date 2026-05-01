@@ -7,7 +7,7 @@
     "worker": "gpt-5.5",
     "judge": "gpt-5.5"
   },
-  "model": "gpt-5.5",
+  "model": "default",
   "mode": "local",
   "maxConcurrentWorkers": 1,
   "statePath": "/data/agent-farm/state.json",
