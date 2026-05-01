@@ -1,5 +1,4 @@
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -35,8 +34,7 @@ def main(
 
     remote_bundle = f"/tmp/{bundle_path.name}"
     try:
-        with bundle_path.open("rb") as source, sandbox.open(remote_bundle, "wb") as target:
-            shutil.copyfileobj(source, target)
+        sandbox.filesystem.copy_from_local(bundle_path, remote_bundle)
 
         artifact_dir = os.path.dirname(artifact)
         steps = [
