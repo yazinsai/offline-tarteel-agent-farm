@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import type { FarmConfig, FarmState, RunRecord, StabilityReport, Task } from "./types.js";
@@ -11,6 +11,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
   const frontendPath = join(repoPath, "web/frontend");
   const artifactDir = join(frontendPath, "test", "agent-farm", task.id);
   mkdirSync(artifactDir, { recursive: true });
+  ensureEvaluationAssets(config, repoPath);
 
   task.status = "evaluating";
   task.updatedAt = now();
@@ -83,6 +84,30 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
   task.updatedAt = now();
   upsertTask(state, task);
   saveState(config.statePath, state);
+}
+
+function ensureEvaluationAssets(config: FarmConfig, repoPath: string): void {
+  const benchmarkDir = join(repoPath, "benchmark");
+  mkdirSync(benchmarkDir, { recursive: true });
+
+  for (const corpus of [config.evaluation.devCorpus, config.evaluation.holdoutCorpus]) {
+    const source = join(config.targetRepoPath, "benchmark", corpus);
+    const target = join(benchmarkDir, corpus);
+    if (!existsSync(target) && existsSync(source)) {
+      runCommand(`ln -s "${source}" "${target}"`, repoPath);
+    }
+  }
+
+  const sourceModel = join(config.targetRepoPath, "web/frontend/public/fastconformer_phoneme_q8.onnx");
+  const targetModel = join(repoPath, "web/frontend/public/fastconformer_phoneme_q8.onnx");
+  if (existsSync(sourceModel) && shouldReplaceModel(targetModel)) {
+    copyFileSync(sourceModel, targetModel);
+  }
+}
+
+function shouldReplaceModel(path: string): boolean {
+  if (!existsSync(path)) return true;
+  return statSync(path).size < 1024 * 1024;
 }
 
 function runStability(
