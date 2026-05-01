@@ -1,0 +1,27 @@
+{
+  "name": "offline-tarteel-agent-farm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "build-splits": "tsx src/index.ts build-splits",
+    "plan": "tsx src/index.ts plan",
+    "work": "tsx src/index.ts work",
+    "eval": "tsx src/index.ts eval",
+    "judge": "tsx src/index.ts judge",
+    "loop": "tsx src/index.ts loop",
+    "daemon": "tsx src/index.ts daemon",
+    "analyze": "tsx src/index.ts analyze",
+    "status": "tsx src/index.ts status",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cursor/sdk": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

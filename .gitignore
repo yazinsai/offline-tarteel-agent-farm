@@ -1,0 +1,7 @@
+node_modules/
+config.json
+runs/*.log
+runs/state.json
+artifacts/
+dist/
+.DS_Store
