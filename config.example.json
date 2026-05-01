@@ -1,0 +1,37 @@
+{
+  "targetRepoPath": "/Users/yazin/projects/offline-tarteel",
+  "targetRepoUrl": "git@github.com:yazinsai/offline-tarteel.git",
+  "baseBranch": "main",
+  "models": {
+    "planner": "gpt-5.5",
+    "worker": "gpt-5.5",
+    "judge": "gpt-5.5"
+  },
+  "model": "default",
+  "mode": "local",
+  "maxConcurrentWorkers": 2,
+  "statePath": "runs/state.json",
+  "baselineReports": {
+    "v2": "web/frontend/test/stab-gate-on-v2.json",
+    "v3": "web/frontend/test/stab-gate-on-v3.json"
+  },
+  "evaluation": {
+    "targetSeqAcc": 0.9,
+    "minPrecision": 0.72,
+    "v2SeqAccRegressionTolerance": 0.01,
+    "remoteBackend": "local",
+    "parallelShards": 4,
+    "modal": {
+      "cpu": 4,
+      "memoryMb": 8192,
+      "image": "node:22-bookworm"
+    },
+    "devCorpus": "test_corpus_v3_dev",
+    "devSampleLimit": 72,
+    "holdoutCorpus": "test_corpus_v3_holdout",
+    "fullCorpus": "test_corpus_v3",
+    "repeatsDev": 1,
+    "repeatsGate": 3,
+    "repeatsFinal": 5
+  }
+}
