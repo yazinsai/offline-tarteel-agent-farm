@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { FarmConfig, FarmState, Task } from "./types.js";
+import type { SDKMessage } from "@cursor/sdk";
 import { makeId, now, upsertTask } from "./state.js";
 
 const seedHypotheses = [
@@ -34,6 +35,7 @@ const seedHypotheses = [
 
 export async function planTasks(config: FarmConfig, state: FarmState, useAi: boolean): Promise<void> {
   const specs = useAi ? await askPlanner(config, state) : seedHypotheses;
+  let queued = 0;
   const seen = new Set(
     state.tasks.map((task) => normalizeHypothesis(task.track, task.hypothesis)),
   );
@@ -59,7 +61,12 @@ export async function planTasks(config: FarmConfig, state: FarmState, useAi: boo
       updatedAt: now(),
     };
     upsertTask(state, task);
+    queued += 1;
     console.log(`Queued ${task.id}: ${task.track}`);
+  }
+
+  if (queued === 0) {
+    console.log(`Planner produced no new tasks (${specs.length} candidate${specs.length === 1 ? "" : "s"}).`);
   }
 }
 
@@ -83,11 +90,27 @@ async function askPlanner(
   const run = await agent.send(prompt);
   let text = "";
   for await (const event of run.stream()) {
-    text += typeof event === "string" ? event : JSON.stringify(event);
+    text += textFromSdkMessage(event);
   }
+  const result = await run.wait().catch(() => undefined);
+  if (!text.trim() && result?.result) text = result.result;
 
   const parsed = parseJsonArray(text);
+  if (parsed.length === 0) {
+    console.warn("Planner returned no parseable task JSON.");
+    if (text.trim()) console.warn(text.trim().slice(-1200));
+  }
   return parsed.length > 0 ? parsed : nextUnseenSeed(state);
+}
+
+function textFromSdkMessage(event: SDKMessage): string {
+  if (event.type === "assistant") {
+    return event.message.content
+      .flatMap((block) => block.type === "text" ? [block.text] : [])
+      .join("");
+  }
+  if (event.type === "task" && event.text) return event.text;
+  return "";
 }
 
 function modelFor(config: FarmConfig, role: "planner" | "worker" | "judge"): string {
