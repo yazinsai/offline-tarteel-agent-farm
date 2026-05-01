@@ -160,6 +160,8 @@ npm run analyze -- \
   --candidate /Users/yazin/projects/offline-tarteel/.worktrees/<branch>/web/frontend/test/agent-farm/<task>/test_corpus_v3-r5.json
 ```
 
+The analyzer accepts both stability-report contracts. Old reports use `aggregate.medianSeqAcc`; new reports use `aggregate.finalSequence.medianExactSetAcc` for the primary exact product metric. New `aggregate.rawCommits.*` metrics are shown as guardrails only.
+
 ## State
 
 State lives in:
@@ -179,9 +181,9 @@ offline-tarteel/web/frontend/test/agent-farm/<task-id>/
 
 The judge accepts only when:
 
-- full v3 median exact SeqAcc reaches `evaluation.targetSeqAcc`
-- v3 median precision is above `evaluation.minPrecision`
-- v2 does not regress beyond `evaluation.v2SeqAccRegressionTolerance`
+- full v3 finalSequence median ExactSetAcc reaches `evaluation.targetSeqAcc`
+- v3 finalSequence median precision is above `evaluation.minPrecision`
+- v2 finalSequence ExactSetAcc does not regress beyond `evaluation.v2SeqAccRegressionTolerance`
 - sample regressions are not broad or suspicious
 
-Everything else is either `promising` or `rejected`; both keep raw artifacts.
+Everything else is either `promising` or `rejected`; both keep raw artifacts. ExactSetAcc means deduped set equality with order ignored. OrderedSeqAcc means exact ordered unique sequence equality. Raw commit metrics remain visible for debugging streaming emissions, but finalSequence is the product contract.

@@ -1,6 +1,6 @@
 You are planning experiments for offline-tarteel.
 
-Goal: get Browser/RN streaming exact sequence accuracy above {{TARGET_SEQACC}} on corpus v3 without overfitting, sample-specific hacks, or magic constants.
+Goal: get Browser/RN final sequence ExactSet accuracy above {{TARGET_SEQACC}} on corpus v3 without overfitting, sample-specific hacks, or magic constants.
 
 Repo path: {{TARGET_REPO_PATH}}
 
@@ -13,7 +13,7 @@ Read EXPERIMENTS.md and the streaming tracker code before proposing work. Return
 [
   {
     "track": "short-kebab-name",
-    "hypothesis": "One controlled change, with the invariant it tests and why it could improve v3 exact SeqAcc while transferring to v2."
+    "hypothesis": "One controlled change, with the invariant it tests and why it could improve v3 Final ExactSet while transferring to v2."
   }
 ]
 
@@ -24,3 +24,4 @@ Rules:
 - Use the attempt history to explain what class of failure the new task avoids.
 - Do not propose per-sample, per-surah, reciter-specific, source-specific, or corpus-specific hacks.
 - Each hypothesis must be independently falsifiable in one branch.
+- Optimize the product contract: finalSequence ExactSetAcc. Raw verse_match commits are guardrails for diagnosing bad streaming emissions, not the primary acceptance metric.

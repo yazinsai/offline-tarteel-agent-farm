@@ -1,4 +1,5 @@
 import type { FarmConfig, FarmState, RunRecord, Task, TaskStatus } from "./types.js";
+import { normalizeStabilityMetrics } from "./types.js";
 import { loadState } from "./state.js";
 
 const ansi = {
@@ -159,8 +160,9 @@ function printHero(
 
 function formatTask(task: Task, run: RunRecord | undefined, width: number): string {
   const age = relativeTime(task.updatedAt);
-  const metric = run?.metrics
-    ? ` ${ansi.gray}|${ansi.reset} ${shortCorpus(run.corpus)} Seq ${metricColor(run.metrics.medianSeqAcc)}${pct(run.metrics.medianSeqAcc)}${ansi.reset}`
+  const metrics = run?.metrics ? normalizeStabilityMetrics(run.metrics) : undefined;
+  const metric = run && metrics
+    ? ` ${ansi.gray}|${ansi.reset} ${shortCorpus(run.corpus)} Final ExactSet ${metricColor(metrics.medianExactSetAcc)}${pct(metrics.medianExactSetAcc)}${ansi.reset}`
     : "";
   return (
     `${ansi.gray}${shortId(task.id)}${ansi.reset} ${statusBadge(task.status)} ` +
@@ -209,14 +211,17 @@ function formatEvalProgress(task: Task, width: number): string[] {
 
 function formatMetricRun(state: FarmState, run: RunRecord, width: number): string {
   const task = state.tasks.find((candidate) => candidate.id === run.taskId);
-  const m = run.metrics!;
+  const m = normalizeStabilityMetrics(run.metrics!);
   const left =
     `${ansi.gray}${shortId(run.taskId)}${ansi.reset} ${ansi.bold}${pad(task?.track ?? "unknown", 18)}${ansi.reset} ` +
     `${ansi.gray}${pad(shortCorpus(run.corpus), 18)} r${run.repeats}${ansi.reset}`;
   const metrics =
     ` P ${metricBar(m.medianPrecision)} ${pct(m.medianPrecision)} ` +
     `R ${metricBar(m.medianRecall)} ${pct(m.medianRecall)} ` +
-    `Seq ${metricBar(m.medianSeqAcc)} ${metricColor(m.medianSeqAcc)}${pct(m.medianSeqAcc)}${ansi.reset}`;
+    `Final ExactSet ${metricBar(m.medianExactSetAcc)} ${metricColor(m.medianExactSetAcc)}${pct(m.medianExactSetAcc)}${ansi.reset}` +
+    (m.rawCommits
+      ? ` ${ansi.gray}Raw P ${pct(m.rawCommits.medianPrecision)} R ${pct(m.rawCommits.medianRecall)} ExactSet ${pct(m.rawCommits.medianExactSetAcc)} OrderedSeq ${pct(m.rawCommits.medianOrderedSeqAcc)}${ansi.reset}`
+      : "");
   return truncate(`${left} ${metrics}`, width - 4);
 }
 

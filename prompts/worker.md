@@ -17,7 +17,8 @@ Hard rules:
 Repo-specific protocol:
 - Use `.venv/bin/python` for Python.
 - For frontend streaming tests, use `cd web/frontend`.
-- Use `npx tsx test/stability-report.ts --focus=exact ...` for exact SeqAcc evaluation.
+- Use `npx tsx test/stability-report.ts --focus=exact ...` for finalSequence ExactSetAcc evaluation.
+- Treat rawCommit metrics as guardrails for bad verse_match emissions. Do not redefine strict raw metrics to make emissions look cleaner.
 - Update EXPERIMENTS.md only if the evaluation data supports the change.
 
 When you finish, report:

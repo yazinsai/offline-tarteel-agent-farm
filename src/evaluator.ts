@@ -2,7 +2,19 @@ import { spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
-import type { EvalShardProgress, FarmConfig, FarmState, RunRecord, StabilityReport, StabilitySample, Task } from "./types.js";
+import type {
+  EvalShardProgress,
+  FarmConfig,
+  FarmState,
+  ProductRunMetrics,
+  RunMetricGroup,
+  RunRecord,
+  StabilityMetricGroup,
+  StabilityReport,
+  StabilitySample,
+  Task,
+} from "./types.js";
+import { normalizeStabilityMetrics, stabilityMetricsFromReport } from "./types.js";
 import { ensureSymlink, readJson, writeJson } from "./fs.js";
 import { runCommand } from "./repo.js";
 import { addRun, makeId, now, saveState, upsertTask } from "./state.js";
@@ -43,9 +55,9 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
     config.evaluation.repeatsDev,
   );
 
-  if ((dev.metrics?.medianSeqAcc ?? 0) < 0.45) {
+  if ((dev.metrics ? normalizeStabilityMetrics(dev.metrics).medianExactSetAcc : 0) < 0.45) {
     task.status = "rejected";
-    task.notes = "Rejected after dev corpus: SeqAcc below 45%.";
+    task.notes = "Rejected after dev corpus: Final ExactSet below 45%.";
     task.updatedAt = now();
     upsertTask(state, task);
     saveState(config.statePath, state);
@@ -268,11 +280,7 @@ async function runParallelStability(
     );
     const merged = mergeStabilityReports(corpus, repeats, reports);
     writeJson(artifactPath, merged);
-    run.metrics = {
-      medianPrecision: merged.aggregate.medianPrecision,
-      medianRecall: merged.aggregate.medianRecall,
-      medianSeqAcc: merged.aggregate.medianSeqAcc,
-    };
+    run.metrics = stabilityMetricsFromReport(merged);
   }
 
   addRun(state, run);
@@ -289,10 +297,11 @@ async function runParallelStability(
   }
 
   finishEvalProgress(config, state, task);
+  const metrics = normalizeStabilityMetrics(run.metrics!);
   console.log(
-    `[${corpus}] P ${(run.metrics!.medianPrecision * 100).toFixed(1)}% ` +
-      `R ${(run.metrics!.medianRecall * 100).toFixed(1)}% ` +
-      `Seq ${(run.metrics!.medianSeqAcc * 100).toFixed(1)}%`,
+    `[${corpus}] P ${(metrics.medianPrecision * 100).toFixed(1)}% ` +
+      `R ${(metrics.medianRecall * 100).toFixed(1)}% ` +
+      `Final ExactSet ${(metrics.medianExactSetAcc * 100).toFixed(1)}%`,
   );
 
   return run;
@@ -399,11 +408,7 @@ function runChecked(
 
   if (artifactPath && result.exitCode === 0) {
     const report = readJson<StabilityReport>(artifactPath);
-    run.metrics = {
-      medianPrecision: report.aggregate.medianPrecision,
-      medianRecall: report.aggregate.medianRecall,
-      medianSeqAcc: report.aggregate.medianSeqAcc,
-    };
+    run.metrics = stabilityMetricsFromReport(report);
   }
 
   addRun(state, run);
@@ -419,10 +424,11 @@ function runChecked(
   }
 
   if (config && run.metrics) {
+    const metrics = normalizeStabilityMetrics(run.metrics);
     console.log(
-      `[${corpus}] P ${(run.metrics.medianPrecision * 100).toFixed(1)}% ` +
-        `R ${(run.metrics.medianRecall * 100).toFixed(1)}% ` +
-        `Seq ${(run.metrics.medianSeqAcc * 100).toFixed(1)}%`,
+      `[${corpus}] P ${(metrics.medianPrecision * 100).toFixed(1)}% ` +
+        `R ${(metrics.medianRecall * 100).toFixed(1)}% ` +
+        `Final ExactSet ${(metrics.medianExactSetAcc * 100).toFixed(1)}%`,
     );
   }
 
@@ -586,7 +592,10 @@ async function runModalShard(
             summary: `attempt ${attempt}/${maxAttempts}: ${phase}`,
           });
         }
-        const summary = line.match(/^Stable-pass: .+$/)?.[0] ?? line.match(/^Median SeqAcc:\s+.+$/)?.[0];
+        const summary =
+          line.match(/^Stable-pass: .+$/)?.[0] ??
+          line.match(/^Median Final ExactSet:\s+.+$/)?.[0] ??
+          line.match(/^Median SeqAcc:\s+.+$/)?.[0];
         if (summary) {
           updateShardProgress(config, state, task, shardIndex, {
             status: "running",
@@ -738,19 +747,40 @@ function sleep(ms: number): Promise<void> {
 
 function mergeStabilityReports(corpus: string, repeats: number, reports: StabilityReport[]): StabilityReport {
   const samples = reports.flatMap((report) => report.samples);
-  const perRunCorrect: number[] = [];
   const perRunExactCorrect: number[] = [];
-  const perRunPrecision: number[] = [];
-  const perRunRecall: number[] = [];
-  const perRunSeqAcc: number[] = [];
+  const perRunFinalPrecision: number[] = [];
+  const perRunFinalRecall: number[] = [];
+  const perRunFinalExactSetAcc: number[] = [];
+  const perRunFinalOrderedSeqAcc: number[] = [];
+  const perRunRawPrecision: number[] = [];
+  const perRunRawRecall: number[] = [];
+  const perRunRawExactSetAcc: number[] = [];
+  const perRunRawOrderedSeqAcc: number[] = [];
+  const perRunFalseVisibleJumps: number[] = [];
+  const perRunTimeToFirstCorrectCandidate: Array<number | null> = [];
 
   for (let runIndex = 0; runIndex < repeats; runIndex++) {
     const runSamples = samples.map((sample) => sample.runs[runIndex]).filter(Boolean);
-    perRunCorrect.push(runSamples.filter((run) => run.passed).length);
+    const finalMetrics = runSamples.map(finalRunMetrics);
     perRunExactCorrect.push(runSamples.filter((run) => run.exactPassed).length);
-    perRunPrecision.push(mean(runSamples.map((run) => run.precision)));
-    perRunRecall.push(mean(runSamples.map((run) => run.recall)));
-    perRunSeqAcc.push(mean(runSamples.map((run) => run.seqAcc)));
+    perRunFinalPrecision.push(mean(finalMetrics.map((metrics) => metrics.precision)));
+    perRunFinalRecall.push(mean(finalMetrics.map((metrics) => metrics.recall)));
+    perRunFinalExactSetAcc.push(mean(finalMetrics.map((metrics) => metrics.exactSetAcc)));
+    perRunFinalOrderedSeqAcc.push(mean(finalMetrics.map((metrics) => metrics.orderedSeqAcc)));
+
+    const rawMetrics = runSamples.flatMap((run) => run.rawCommitMetrics ? [run.rawCommitMetrics] : []);
+    if (rawMetrics.length > 0) {
+      perRunRawPrecision.push(mean(rawMetrics.map((metrics) => metrics.precision)));
+      perRunRawRecall.push(mean(rawMetrics.map((metrics) => metrics.recall)));
+      perRunRawExactSetAcc.push(mean(rawMetrics.map((metrics) => metrics.exactSetAcc)));
+      perRunRawOrderedSeqAcc.push(mean(rawMetrics.map((metrics) => metrics.orderedSeqAcc)));
+    }
+
+    const productMetrics = runSamples.flatMap((run) => run.productMetrics ? [run.productMetrics] : []);
+    if (productMetrics.length > 0) {
+      perRunFalseVisibleJumps.push(mean(productMetrics.map((metrics) => metrics.falseVisibleJumps)));
+      perRunTimeToFirstCorrectCandidate.push(medianNullable(productMetrics.map((metrics) => metrics.timeToFirstCorrectCandidate)));
+    }
   }
 
   return {
@@ -765,15 +795,63 @@ function mergeStabilityReports(corpus: string, repeats: number, reports: Stabili
       exactStablePass: countSamples(samples, "exactClassification", "exact-stable-pass"),
       exactStableFail: countSamples(samples, "exactClassification", "exact-stable-fail"),
       exactFlaky: countSamples(samples, "exactClassification", "exact-flaky"),
-      medianPrecision: median(perRunPrecision),
-      medianRecall: median(perRunRecall),
-      medianSeqAcc: median(perRunSeqAcc),
-      perRunCorrect,
       perRunExactCorrect,
-      perRunPrecision,
-      perRunRecall,
-      perRunSeqAcc,
+      finalSequence: metricGroupFromPerRun(
+        perRunFinalPrecision,
+        perRunFinalRecall,
+        perRunFinalExactSetAcc,
+        perRunFinalOrderedSeqAcc,
+      ),
+      ...(perRunRawPrecision.length > 0
+        ? {
+            rawCommits: metricGroupFromPerRun(
+              perRunRawPrecision,
+              perRunRawRecall,
+              perRunRawExactSetAcc,
+              perRunRawOrderedSeqAcc,
+            ),
+          }
+        : {}),
+      ...(perRunFalseVisibleJumps.length > 0
+        ? {
+            product: {
+              medianFalseVisibleJumps: median(perRunFalseVisibleJumps),
+              medianTimeToFirstCorrectCandidate: medianNullable(perRunTimeToFirstCorrectCandidate),
+            },
+          }
+        : {}),
     },
+  };
+}
+
+function finalRunMetrics(run: StabilitySample["runs"][number]): RunMetricGroup {
+  if (run.finalSequenceMetrics) return run.finalSequenceMetrics;
+  const precision = run.precision ?? 0;
+  const recall = run.recall ?? 0;
+  const seqAcc = run.seqAcc ?? 0;
+  return {
+    precision,
+    recall,
+    exactSetAcc: seqAcc,
+    orderedSeqAcc: seqAcc,
+  };
+}
+
+function metricGroupFromPerRun(
+  precision: number[],
+  recall: number[],
+  exactSetAcc: number[],
+  orderedSeqAcc: number[],
+): StabilityMetricGroup {
+  return {
+    medianPrecision: median(precision),
+    medianRecall: median(recall),
+    medianExactSetAcc: median(exactSetAcc),
+    medianOrderedSeqAcc: median(orderedSeqAcc),
+    perRunPrecision: precision,
+    perRunRecall: recall,
+    perRunExactSetAcc: exactSetAcc,
+    perRunOrderedSeqAcc: orderedSeqAcc,
   };
 }
 
@@ -796,4 +874,10 @@ function median(values: number[]): number {
   const middle = Math.floor(sorted.length / 2);
   if (sorted.length % 2 === 1) return sorted[middle]!;
   return (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+function medianNullable(values: Array<number | null>): number | null {
+  const numeric = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (numeric.length === 0) return null;
+  return median(numeric);
 }

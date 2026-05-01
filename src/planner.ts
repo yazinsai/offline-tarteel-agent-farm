@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { FarmConfig, FarmState, Task } from "./types.js";
+import { normalizeStabilityMetrics } from "./types.js";
 import type { SDKMessage } from "@cursor/sdk";
 import { makeId, now, upsertTask } from "./state.js";
 
@@ -143,11 +144,14 @@ function summarizeHistory(state: FarmState): string {
     const decision = decisions.get(task.id);
     const runs = state.runs
       .filter((run) => run.taskId === task.id && run.metrics)
-      .map((run) =>
-        `${run.corpus}: P ${(run.metrics!.medianPrecision * 100).toFixed(1)} ` +
-        `R ${(run.metrics!.medianRecall * 100).toFixed(1)} ` +
-        `Seq ${(run.metrics!.medianSeqAcc * 100).toFixed(1)}`,
-      )
+      .map((run) => {
+        const metrics = normalizeStabilityMetrics(run.metrics!);
+        return (
+          `${run.corpus}: P ${(metrics.medianPrecision * 100).toFixed(1)} ` +
+          `R ${(metrics.medianRecall * 100).toFixed(1)} ` +
+          `Final ExactSet ${(metrics.medianExactSetAcc * 100).toFixed(1)}`
+        );
+      })
       .join("; ");
 
     return [

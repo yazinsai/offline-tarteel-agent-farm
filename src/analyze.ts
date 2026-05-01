@@ -1,4 +1,5 @@
 import type { StabilityReport, StabilitySample } from "./types.js";
+import { finalExactSetScore, stabilityMetricsFromReport } from "./types.js";
 import { readJson } from "./fs.js";
 
 export interface StabilityDiff {
@@ -7,7 +8,12 @@ export interface StabilityDiff {
   delta: {
     precision: number;
     recall: number;
-    seqAcc: number;
+    finalExactSet: number;
+    finalOrderedSeq: number;
+    rawCommitPrecision?: number;
+    rawCommitRecall?: number;
+    rawCommitExactSet?: number;
+    rawCommitOrderedSeq?: number;
     exactStablePass: number;
     exactStableFail: number;
     exactFlaky: number;
@@ -28,6 +34,8 @@ export interface SampleChange {
 export function analyzeReports(baselinePath: string, candidatePath: string): StabilityDiff {
   const baseline = readJson<StabilityReport>(baselinePath);
   const candidate = readJson<StabilityReport>(candidatePath);
+  const baselineMetrics = stabilityMetricsFromReport(baseline);
+  const candidateMetrics = stabilityMetricsFromReport(candidate);
 
   const baselineSamples = new Map(baseline.samples.map((sample) => [sample.id, sample]));
   const improved: SampleChange[] = [];
@@ -37,8 +45,8 @@ export function analyzeReports(baselinePath: string, candidatePath: string): Sta
     const before = baselineSamples.get(sample.id);
     if (!before) continue;
 
-    const beforeScore = exactScore(before);
-    const afterScore = exactScore(sample);
+    const beforeScore = finalExactSetScore(before);
+    const afterScore = finalExactSetScore(sample);
     if (afterScore > beforeScore) improved.push(toChange(before, sample));
     if (afterScore < beforeScore) regressed.push(toChange(before, sample));
   }
@@ -52,9 +60,26 @@ export function analyzeReports(baselinePath: string, candidatePath: string): Sta
     baseline: baselinePath,
     candidate: candidatePath,
     delta: {
-      precision: candidate.aggregate.medianPrecision - baseline.aggregate.medianPrecision,
-      recall: candidate.aggregate.medianRecall - baseline.aggregate.medianRecall,
-      seqAcc: candidate.aggregate.medianSeqAcc - baseline.aggregate.medianSeqAcc,
+      precision: candidateMetrics.medianPrecision - baselineMetrics.medianPrecision,
+      recall: candidateMetrics.medianRecall - baselineMetrics.medianRecall,
+      finalExactSet: candidateMetrics.medianExactSetAcc - baselineMetrics.medianExactSetAcc,
+      finalOrderedSeq: candidateMetrics.medianOrderedSeqAcc - baselineMetrics.medianOrderedSeqAcc,
+      rawCommitPrecision: optionalDelta(
+        candidateMetrics.rawCommits?.medianPrecision,
+        baselineMetrics.rawCommits?.medianPrecision,
+      ),
+      rawCommitRecall: optionalDelta(
+        candidateMetrics.rawCommits?.medianRecall,
+        baselineMetrics.rawCommits?.medianRecall,
+      ),
+      rawCommitExactSet: optionalDelta(
+        candidateMetrics.rawCommits?.medianExactSetAcc,
+        baselineMetrics.rawCommits?.medianExactSetAcc,
+      ),
+      rawCommitOrderedSeq: optionalDelta(
+        candidateMetrics.rawCommits?.medianOrderedSeqAcc,
+        baselineMetrics.rawCommits?.medianOrderedSeqAcc,
+      ),
       exactStablePass: (candidate.aggregate.exactStablePass ?? 0) - (baseline.aggregate.exactStablePass ?? 0),
       exactStableFail: (candidate.aggregate.exactStableFail ?? 0) - (baseline.aggregate.exactStableFail ?? 0),
       exactFlaky: (candidate.aggregate.exactFlaky ?? 0) - (baseline.aggregate.exactFlaky ?? 0),
@@ -71,7 +96,20 @@ export function printDiff(diff: StabilityDiff): void {
   console.log("");
   console.log(`Precision: ${pct(diff.delta.precision)}`);
   console.log(`Recall:    ${pct(diff.delta.recall)}`);
-  console.log(`SeqAcc:    ${pct(diff.delta.seqAcc)}`);
+  console.log(`Final ExactSet:  ${pct(diff.delta.finalExactSet)}`);
+  console.log(`Final OrderedSeq: ${pct(diff.delta.finalOrderedSeq)}`);
+  if (diff.delta.rawCommitPrecision !== undefined) {
+    console.log(`Raw Precision:   ${pct(diff.delta.rawCommitPrecision)}`);
+  }
+  if (diff.delta.rawCommitRecall !== undefined) {
+    console.log(`Raw Recall:      ${pct(diff.delta.rawCommitRecall)}`);
+  }
+  if (diff.delta.rawCommitExactSet !== undefined) {
+    console.log(`Raw ExactSet:    ${pct(diff.delta.rawCommitExactSet)}`);
+  }
+  if (diff.delta.rawCommitOrderedSeq !== undefined) {
+    console.log(`Raw OrderedSeq:  ${pct(diff.delta.rawCommitOrderedSeq)}`);
+  }
   console.log(`Exact stable-pass: ${signed(diff.delta.exactStablePass)}`);
   console.log(`Exact stable-fail: ${signed(diff.delta.exactStableFail)}`);
   console.log(`Exact flaky:       ${signed(diff.delta.exactFlaky)}`);
@@ -92,11 +130,6 @@ export function printDiff(diff: StabilityDiff): void {
   }
 }
 
-function exactScore(sample: StabilitySample): number {
-  if (typeof sample.exactPassRate === "number") return sample.exactPassRate;
-  return sample.runs.filter((run) => run.seqAcc === 1).length / sample.runs.length;
-}
-
 function toChange(before: StabilitySample, after: StabilitySample): SampleChange {
   return {
     id: after.id,
@@ -108,7 +141,7 @@ function toChange(before: StabilitySample, after: StabilitySample): SampleChange
 }
 
 function sampleLabel(sample: StabilitySample): string {
-  return sample.exactClassification ?? `${Math.round(exactScore(sample) * 100)}%`;
+  return sample.exactClassification ?? `${Math.round(finalExactSetScore(sample) * 100)}%`;
 }
 
 function clusterWarnings(kind: string, changes: SampleChange[]): string[] {
@@ -128,4 +161,9 @@ function pct(value: number): string {
 
 function signed(value: number): string {
   return `${value >= 0 ? "+" : ""}${value}`;
+}
+
+function optionalDelta(candidate: number | undefined, baseline: number | undefined): number | undefined {
+  if (candidate === undefined || baseline === undefined) return undefined;
+  return candidate - baseline;
 }
