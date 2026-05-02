@@ -22,6 +22,7 @@ const ansi = {
 };
 
 const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+let frameLines: string[] | undefined;
 
 const statusOrder: TaskStatus[] = [
   "running",
@@ -31,6 +32,8 @@ const statusOrder: TaskStatus[] = [
   "promising",
   "accepted",
   "rejected",
+  "self-rejected",
+  "cancelled",
   "failed",
 ];
 
@@ -62,7 +65,7 @@ function renderDashboard(config: FarmConfig, state: FarmState, frame: number): v
   const now = new Date();
   const spinner = spinnerFrames[frame % spinnerFrames.length];
 
-  clearScreen();
+  frameLines = [];
   printHero(config, state, now, spinner, width);
   blank();
 
@@ -89,6 +92,12 @@ function renderDashboard(config: FarmConfig, state: FarmState, frame: number): v
     width,
   );
   blank();
+
+  const runningMessages = formatRunningMessages(state, width);
+  if (runningMessages.length > 0) {
+    panel("Running Task Messages", runningMessages, width);
+    blank();
+  }
 
   const activeEvals = state.tasks.filter((task) => task.status === "evaluating" && task.evalProgress);
   if (activeEvals.length > 0) {
@@ -135,7 +144,10 @@ function renderDashboard(config: FarmConfig, state: FarmState, frame: number): v
           ),
     width,
   );
-  process.stdout.write("\x1b[J");
+
+  const frameOutput = `${frameLines.join("\n")}\n`;
+  frameLines = undefined;
+  process.stdout.write(`\x1b[H${frameOutput}\x1b[J`);
 }
 
 function printHero(
@@ -152,10 +164,10 @@ function printHero(
     `fallback=${config.model} worker=${config.models?.worker ?? config.model}${ansi.reset}`;
   const pulse = activeCount > 0 ? `${ansi.green}LIVE${ansi.reset}` : `${ansi.gray}IDLE${ansi.reset}`;
 
-  console.log("╔" + "═".repeat(Math.max(0, width - 2)) + "╗");
-  console.log(`║ ${truncate(`${title} ${pulse}`, width - 4)}${" ".repeat(Math.max(0, width - visibleLength(`${title} ${pulse}`) - 3))}║`);
-  console.log(`║ ${truncate(subtitle, width - 4)}${" ".repeat(Math.max(0, width - visibleLength(subtitle) - 3))}║`);
-  console.log("╚" + "═".repeat(Math.max(0, width - 2)) + "╝");
+  writeLine("╔" + "═".repeat(Math.max(0, width - 2)) + "╗");
+  writeLine(`║ ${truncate(`${title} ${pulse}`, width - 4)}${" ".repeat(Math.max(0, width - visibleLength(`${title} ${pulse}`) - 3))}║`);
+  writeLine(`║ ${truncate(subtitle, width - 4)}${" ".repeat(Math.max(0, width - visibleLength(subtitle) - 3))}║`);
+  writeLine("╚" + "═".repeat(Math.max(0, width - 2)) + "╝");
 }
 
 function formatTask(task: Task, run: RunRecord | undefined, width: number): string {
@@ -169,6 +181,27 @@ function formatTask(task: Task, run: RunRecord | undefined, width: number): stri
     `${ansi.bold}${pad(task.track, 18)}${ansi.reset} ${ansi.gray}${pad(age, 7)}${ansi.reset} ` +
     truncate(`${task.hypothesis}${metric}`, width - 54)
   );
+}
+
+function formatRunningMessages(state: FarmState, width: number): string[] {
+  const running = state.tasks.filter((task) => task.status === "running");
+  return running.flatMap((task) => {
+    const messages = (task.recentMessages ?? []).slice(-2);
+    const heartbeat = task.workerHeartbeatAt ? ` heartbeat ${relativeTime(task.workerHeartbeatAt)}` : "";
+    const header =
+      `${ansi.gray}${shortId(task.id)}${ansi.reset} ${statusBadge(task.status)} ` +
+      `${ansi.bold}${pad(task.track, 18)}${ansi.reset}${ansi.gray}${heartbeat}${ansi.reset}`;
+    if (messages.length === 0) return [truncate(`${header} ${dim("No messages yet.")}`, width - 6)];
+    return [
+      truncate(header, width - 6),
+      ...messages.map((message) =>
+        truncate(
+          `  ${ansi.gray}${relativeTime(message.at)}${ansi.reset} ${messageKindBadge(message.kind)} ${message.text}`,
+          width - 6,
+        ),
+      ),
+    ];
+  });
 }
 
 function formatEvalProgress(task: Task, width: number): string[] {
@@ -313,12 +346,12 @@ function truncate(value: string, maxLength: number): string {
 function panel(title: string, rows: string[], width: number): void {
   const inner = Math.max(40, width - 4);
   const cleanTitle = ` ${title} `;
-  console.log(`${ansi.gray}╭─${ansi.reset}${ansi.bold}${ansi.cyan}${cleanTitle}${ansi.reset}${ansi.gray}${"─".repeat(Math.max(0, inner - cleanTitle.length))}╮${ansi.reset}`);
+  writeLine(`${ansi.gray}╭─${ansi.reset}${ansi.bold}${ansi.cyan}${cleanTitle}${ansi.reset}${ansi.gray}${"─".repeat(Math.max(0, inner - cleanTitle.length))}╮${ansi.reset}`);
   for (const row of rows) {
     const content = truncate(row, inner - 1);
-    console.log(`${ansi.gray}│${ansi.reset} ${content}${" ".repeat(Math.max(0, inner - visibleLength(content)))}${ansi.gray}│${ansi.reset}`);
+    writeLine(`${ansi.gray}│${ansi.reset} ${content}${" ".repeat(Math.max(0, inner - visibleLength(content)))}${ansi.gray}│${ansi.reset}`);
   }
-  console.log(`${ansi.gray}╰${"─".repeat(inner + 1)}╯${ansi.reset}`);
+  writeLine(`${ansi.gray}╰${"─".repeat(inner + 1)}╯${ansi.reset}`);
 }
 
 function statusBadge(status: TaskStatus): string {
@@ -335,6 +368,12 @@ function statusBadge(status: TaskStatus): string {
               ? ansi.bgYellow
               : ansi.bgRed;
   return chip(status, color);
+}
+
+function messageKindBadge(kind: "assistant" | "tool" | "status"): string {
+  if (kind === "assistant") return `${ansi.cyan}assistant${ansi.reset}`;
+  if (kind === "tool") return `${ansi.yellow}tool${ansi.reset}`;
+  return `${ansi.gray}status${ansi.reset}`;
 }
 
 function chip(text: string, color: string): string {
@@ -364,11 +403,15 @@ function visibleLength(value: string): number {
 }
 
 function blank(): void {
-  console.log("");
+  writeLine("");
 }
 
-function clearScreen(): void {
-  process.stdout.write("\x1b[H");
+function writeLine(line: string): void {
+  if (frameLines) {
+    frameLines.push(line);
+    return;
+  }
+  process.stdout.write(`${line}\n`);
 }
 
 function sleep(ms: number): Promise<void> {

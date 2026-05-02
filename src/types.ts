@@ -66,6 +66,7 @@ export interface Task {
   cursorRunId?: string;
   cursorAgentId?: string;
   workerHeartbeatAt?: string;
+  recentMessages?: TaskMessage[];
   evalProgress?: EvalProgress;
   workerResult?: WorkerResult;
   analysis?: TaskAnalysis;
@@ -73,6 +74,12 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   notes?: string;
+}
+
+export interface TaskMessage {
+  at: string;
+  kind: "assistant" | "tool" | "status";
+  text: string;
 }
 
 export interface WorkerResult {

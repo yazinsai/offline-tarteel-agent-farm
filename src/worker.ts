@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { FarmConfig, FarmState, Task, WorkerResult } from "./types.js";
+import type { FarmConfig, FarmState, Task, TaskMessage, WorkerResult } from "./types.js";
 import { createWorktree } from "./repo.js";
 import { readJson } from "./fs.js";
 import { now, saveState, upsertTask } from "./state.js";
@@ -64,11 +64,22 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
 
   let log = "";
   let lastHeartbeatMs = 0;
+  let lastMessageSaveMs = 0;
   for await (const event of run.stream()) {
     const line = typeof event === "string" ? event : JSON.stringify(event);
     log += `${line}\n`;
     process.stdout.write(`${line}\n`);
+    const recordedMessage = recordWorkerEvent(task, event);
     const heartbeatMs = Date.now();
+    const shouldSaveMessage =
+      recordedMessage &&
+      (recordedMessage.kind !== "assistant" || heartbeatMs - lastMessageSaveMs > 2_000);
+    if (shouldSaveMessage) {
+      lastMessageSaveMs = heartbeatMs;
+      task.updatedAt = now();
+      upsertTask(state, task);
+      saveState(config.statePath, state);
+    }
     if (heartbeatMs - lastHeartbeatMs > 60_000) {
       lastHeartbeatMs = heartbeatMs;
       task.workerHeartbeatAt = now();
@@ -93,6 +104,82 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   task.updatedAt = now();
   upsertTask(state, task);
   saveState(config.statePath, state);
+}
+
+function recordWorkerEvent(task: Task, event: unknown): Omit<TaskMessage, "at"> | undefined {
+  const message = messageFromWorkerEvent(event);
+  if (!message) return undefined;
+  const timestamp = now();
+  const recent = task.recentMessages ?? [];
+  const last = recent.at(-1);
+  if (message.kind === "assistant" && last?.kind === "assistant") {
+    last.at = timestamp;
+    last.text = compactMessage(`${last.text}${message.text}`);
+  } else {
+    recent.push({ at: timestamp, ...message });
+  }
+  task.recentMessages = recent.slice(-8);
+  return message;
+}
+
+function messageFromWorkerEvent(event: unknown): Omit<TaskMessage, "at"> | undefined {
+  if (!event || typeof event !== "object") return undefined;
+  const payload = event as {
+    type?: string;
+    status?: string;
+    text?: string;
+    name?: string;
+    args?: unknown;
+    result?: unknown;
+    message?: { content?: Array<{ type?: string; text?: string }> };
+  };
+
+  if (payload.type === "assistant") {
+    const text = payload.message?.content
+      ?.flatMap((block) => block.type === "text" && block.text ? [block.text] : [])
+      .join("");
+    if (!text?.trim()) return undefined;
+    return { kind: "assistant", text: compactMessage(text) };
+  }
+
+  if (payload.type === "tool_call") {
+    const command = toolCommand(payload.args);
+    const suffix = payload.status === "completed" ? toolResultSummary(payload.result) : command;
+    return {
+      kind: "tool",
+      text: compactMessage(`${payload.name ?? "tool"} ${payload.status ?? "event"}${suffix ? `: ${suffix}` : ""}`),
+    };
+  }
+
+  if (payload.type === "status" && payload.status) {
+    return { kind: "status", text: payload.status };
+  }
+
+  if (payload.type === "task" && payload.text) {
+    return { kind: "status", text: compactMessage(payload.text) };
+  }
+
+  return undefined;
+}
+
+function toolCommand(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const command = "command" in args && typeof args.command === "string" ? args.command : undefined;
+  const path = "path" in args && typeof args.path === "string" ? args.path : undefined;
+  return command ?? path;
+}
+
+function toolResultSummary(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const value = "value" in result ? result.value : undefined;
+  if (!value || typeof value !== "object") return undefined;
+  const exitCode = "exitCode" in value && typeof value.exitCode === "number" ? `exit ${value.exitCode}` : undefined;
+  const totalLines = "totalLines" in value && typeof value.totalLines === "number" ? `${value.totalLines} lines` : undefined;
+  return exitCode ?? totalLines;
+}
+
+function compactMessage(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, 260);
 }
 
 async function startCloudWorker(config: FarmConfig, state: FarmState, task: Task): Promise<void> {
