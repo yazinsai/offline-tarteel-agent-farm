@@ -6,6 +6,7 @@ RUN apt-get update \
     cpulimit \
     ffmpeg \
     git \
+    git-lfs \
     openssh-client \
     python3 \
     python3-venv \

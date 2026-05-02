@@ -197,7 +197,8 @@ function isRetryableInfrastructureFailure(notes: string): boolean {
     notes.includes("smudge filter lfs failed") ||
     notes.includes("Could not resolve hostname github-verify") ||
     notes.includes("external filter 'git-lfs filter-process' failed") ||
-    notes.includes("a branch named 'agent/")
+    notes.includes("a branch named 'agent/") ||
+    notes.includes("'git-lfs' was not found")
   );
 }
 
