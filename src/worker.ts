@@ -23,6 +23,7 @@ export async function startWorkerForTask(
 ): Promise<void> {
   task.status = "running";
   task.updatedAt = now();
+  task.workerHeartbeatAt = task.updatedAt;
   upsertTask(state, task);
   saveState(config.statePath, state);
 
@@ -62,10 +63,19 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   mkdirSync(join(process.cwd(), "runs"), { recursive: true });
 
   let log = "";
+  let lastHeartbeatMs = 0;
   for await (const event of run.stream()) {
     const line = typeof event === "string" ? event : JSON.stringify(event);
     log += `${line}\n`;
     process.stdout.write(`${line}\n`);
+    const heartbeatMs = Date.now();
+    if (heartbeatMs - lastHeartbeatMs > 60_000) {
+      lastHeartbeatMs = heartbeatMs;
+      task.workerHeartbeatAt = now();
+      task.updatedAt = task.workerHeartbeatAt;
+      upsertTask(state, task);
+      saveState(config.statePath, state);
+    }
   }
   writeFileSync(logPath, log);
 

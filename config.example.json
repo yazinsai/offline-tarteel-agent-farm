@@ -12,6 +12,7 @@
   "maxConcurrentWorkers": 2,
   "maxConcurrentEvaluations": 1,
   "minQueuedTasks": 8,
+  "staleWorkerMinutes": 180,
   "statePath": "runs/state.json",
   "baselineReports": {
     "v2": "web/frontend/test/stab-gate-on-v2.json",

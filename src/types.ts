@@ -14,6 +14,7 @@ export interface FarmConfig {
   maxConcurrentWorkers: number;
   maxConcurrentEvaluations?: number;
   minQueuedTasks?: number;
+  staleWorkerMinutes?: number;
   statePath: string;
   baselineReports: {
     v2: string;
@@ -64,6 +65,7 @@ export interface Task {
   worktreePath?: string;
   cursorRunId?: string;
   cursorAgentId?: string;
+  workerHeartbeatAt?: string;
   evalProgress?: EvalProgress;
   workerResult?: WorkerResult;
   analysis?: TaskAnalysis;

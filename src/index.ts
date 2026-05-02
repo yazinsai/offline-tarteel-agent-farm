@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import { analyzeReports, printDiff } from "./analyze.js";
 import { hasFlag, loadConfig, valueAfter } from "./config.js";
@@ -100,6 +101,7 @@ async function runDaemon(
   const sleepSeconds = Number(valueAfter(args, "--sleep-seconds") ?? "60");
   recoverInterruptedEvaluations(state);
   recoverInfrastructureFailures(state);
+  recoverStaleWorkers(config, state);
   saveState(config.statePath, state);
 
   console.log(`Starting daemon loop. sleep=${sleepSeconds}s aiPlanning=${useAi}`);
@@ -127,6 +129,7 @@ async function runLoop(
 
   recoverInterruptedEvaluations(state);
   recoverInfrastructureFailures(state);
+  recoverStaleWorkers(config, state);
   buildSplits(config);
   if (queuedTasks(state).length < minQueuedTasks(config)) {
     await planTasks(config, state, useAi);
@@ -199,6 +202,30 @@ function recoverInterruptedEvaluations(state: ReturnType<typeof loadState>): voi
   }
 }
 
+function recoverStaleWorkers(
+  config: ReturnType<typeof loadConfig>,
+  state: ReturnType<typeof loadState>,
+): void {
+  const timestamp = new Date().toISOString();
+  const cutoffMs = Date.now() - staleWorkerMinutes(config) * 60_000;
+  for (const task of state.tasks) {
+    if (task.status !== "running") continue;
+    const heartbeat = Date.parse(task.workerHeartbeatAt ?? task.updatedAt);
+    if (Number.isFinite(heartbeat) && heartbeat >= cutoffMs) continue;
+
+    const resultPath = task.worktreePath ? join(task.worktreePath, ".agent-farm", "result.json") : undefined;
+    if (resultPath && existsSync(resultPath)) {
+      task.status = "needs-eval";
+      task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered stale worker with result artifact at ${timestamp}.`;
+    } else {
+      task.status = "queued";
+      task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered stale worker without result artifact at ${timestamp}.`;
+    }
+    task.updatedAt = timestamp;
+    task.workerHeartbeatAt = undefined;
+  }
+}
+
 function pruneQueue(state: ReturnType<typeof loadState>, keep: number): void {
   const queued = queuedTasks(state);
   const keepCount = Math.max(0, Math.floor(keep));
@@ -221,6 +248,10 @@ function maxConcurrentWorkers(config: ReturnType<typeof loadConfig>): number {
 
 function minQueuedTasks(config: ReturnType<typeof loadConfig>): number {
   return Math.max(0, Math.floor(config.minQueuedTasks ?? 1));
+}
+
+function staleWorkerMinutes(config: ReturnType<typeof loadConfig>): number {
+  return Math.max(15, Math.floor(config.staleWorkerMinutes ?? 180));
 }
 
 function recoverInfrastructureFailures(state: ReturnType<typeof loadState>): void {
