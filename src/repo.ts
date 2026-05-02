@@ -46,6 +46,7 @@ export function createWorktree(targetRepoPath: string, branch: string, baseBranc
   const result = runCommand(
     `git worktree add ".worktrees/${safeName}" -b "${branch}" "${baseBranch}"`,
     targetRepoPath,
+    { GIT_LFS_SKIP_SMUDGE: "1" },
   );
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || result.stdout);

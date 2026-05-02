@@ -93,6 +93,7 @@ async function runDaemon(
   const useAi = hasFlag(args, "--ai");
   const sleepSeconds = Number(valueAfter(args, "--sleep-seconds") ?? "60");
   recoverInterruptedEvaluations(state);
+  recoverInfrastructureFailures(state);
   saveState(config.statePath, state);
 
   console.log(`Starting daemon loop. sleep=${sleepSeconds}s aiPlanning=${useAi}`);
@@ -119,6 +120,7 @@ async function runLoop(
   const cycles = Number(valueAfter(args, "--cycles") ?? "1");
 
   recoverInterruptedEvaluations(state);
+  recoverInfrastructureFailures(state);
   buildSplits(config);
   if (state.tasks.every((task) => task.status !== "queued")) {
     await planTasks(config, state, useAi);
@@ -176,6 +178,26 @@ function recoverInterruptedEvaluations(state: ReturnType<typeof loadState>): voi
     task.updatedAt = timestamp;
     task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered interrupted evaluation at ${timestamp}.`;
   }
+}
+
+function recoverInfrastructureFailures(state: ReturnType<typeof loadState>): void {
+  const timestamp = new Date().toISOString();
+  for (const task of state.tasks) {
+    if (task.status !== "failed") continue;
+    const notes = task.notes ?? "";
+    if (!isRetryableInfrastructureFailure(notes)) continue;
+    task.status = "queued";
+    task.updatedAt = timestamp;
+    task.notes = `${notes}\nRecovered retryable infrastructure failure at ${timestamp}.`;
+  }
+}
+
+function isRetryableInfrastructureFailure(notes: string): boolean {
+  return (
+    notes.includes("smudge filter lfs failed") ||
+    notes.includes("Could not resolve hostname github-verify") ||
+    notes.includes("external filter 'git-lfs filter-process' failed")
+  );
 }
 
 function sleep(ms: number): Promise<void> {
