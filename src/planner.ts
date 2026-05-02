@@ -154,7 +154,7 @@ function summarizeHistory(state: FarmState): string {
   }
 
   const decisions = new Map(state.decisions.map((decision) => [decision.taskId, decision]));
-  const lines = state.tasks.slice(-30).map((task) => {
+  const lines = state.tasks.filter((task) => task.status !== "cancelled").slice(-30).map((task) => {
     const decision = decisions.get(task.id);
     const runs = state.runs
       .filter((run) => run.taskId === task.id && run.metrics)

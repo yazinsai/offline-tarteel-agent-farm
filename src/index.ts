@@ -71,6 +71,12 @@ async function main(): Promise<void> {
         printStatus(state);
         break;
 
+      case "prune-queue": {
+        const keep = Number(valueAfter(args, "--keep") ?? args[0] ?? "2");
+        pruneQueue(state, keep);
+        break;
+      }
+
       case "dashboard":
         await runDashboard(config, {
           intervalSeconds: Number(valueAfter(args, "--interval-seconds") ?? "5"),
@@ -122,7 +128,7 @@ async function runLoop(
   recoverInterruptedEvaluations(state);
   recoverInfrastructureFailures(state);
   buildSplits(config);
-  if (state.tasks.every((task) => task.status !== "queued")) {
+  if (queuedTasks(state).length < minQueuedTasks(config)) {
     await planTasks(config, state, useAi);
   }
 
@@ -134,19 +140,32 @@ async function runLoop(
       continue;
     }
 
-    const task = state.tasks.find((candidate) => candidate.status === "queued");
-    if (!task) {
+    const availableWorkerSlots = Math.max(
+      0,
+      maxConcurrentWorkers(config) - state.tasks.filter((candidate) => candidate.status === "running").length,
+    );
+    const tasks = queuedTasks(state).slice(0, availableWorkerSlots);
+    if (tasks.length === 0) {
       console.log("No queued tasks left.");
       return;
     }
 
-    await startWorkerForTask(config, state, task);
-    const workedTask = findTaskOrThrow(state, task.id);
-    if (workedTask.status === "self-rejected") continue;
-    await evaluateTask(config, state, workedTask);
-    const evaluatedTask = findTaskOrThrow(state, task.id);
-    if (evaluatedTask.status === "self-rejected") continue;
-    judgeTask(config, state, evaluatedTask);
+    await runWorkerBatch(config, state, tasks);
+  }
+}
+
+async function runWorkerBatch(
+  config: ReturnType<typeof loadConfig>,
+  state: ReturnType<typeof loadState>,
+  tasks: ReturnType<typeof queuedTasks>,
+): Promise<void> {
+  console.log(`Starting ${tasks.length} worker${tasks.length === 1 ? "" : "s"}.`);
+  const results = await Promise.allSettled(
+    tasks.map((task) => startWorkerForTask(config, state, task)),
+  );
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length > 0) {
+    console.warn(`${failures.length} worker${failures.length === 1 ? "" : "s"} failed in batch.`);
   }
 }
 
@@ -178,6 +197,30 @@ function recoverInterruptedEvaluations(state: ReturnType<typeof loadState>): voi
     task.updatedAt = timestamp;
     task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered interrupted evaluation at ${timestamp}.`;
   }
+}
+
+function pruneQueue(state: ReturnType<typeof loadState>, keep: number): void {
+  const queued = queuedTasks(state);
+  const keepCount = Math.max(0, Math.floor(keep));
+  const timestamp = new Date().toISOString();
+  for (const task of queued.slice(keepCount)) {
+    task.status = "cancelled";
+    task.updatedAt = timestamp;
+    task.notes = `${task.notes ? `${task.notes}\n` : ""}Cancelled by queue prune at ${timestamp}.`;
+  }
+  console.log(`Cancelled ${Math.max(0, queued.length - keepCount)} queued task(s), kept ${Math.min(queued.length, keepCount)}.`);
+}
+
+function queuedTasks(state: ReturnType<typeof loadState>) {
+  return state.tasks.filter((candidate) => candidate.status === "queued");
+}
+
+function maxConcurrentWorkers(config: ReturnType<typeof loadConfig>): number {
+  return Math.max(1, Math.floor(config.maxConcurrentWorkers || 1));
+}
+
+function minQueuedTasks(config: ReturnType<typeof loadConfig>): number {
+  return Math.max(0, Math.floor(config.minQueuedTasks ?? 1));
 }
 
 function recoverInfrastructureFailures(state: ReturnType<typeof loadState>): void {

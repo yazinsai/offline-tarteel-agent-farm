@@ -9,7 +9,9 @@
   },
   "model": "default",
   "mode": "local",
-  "maxConcurrentWorkers": 1,
+  "maxConcurrentWorkers": 3,
+  "maxConcurrentEvaluations": 1,
+  "minQueuedTasks": 2,
   "statePath": "/data/agent-farm/state.json",
   "baselineReports": {
     "v2": "web/frontend/test/stab-gate-on-v2.json",

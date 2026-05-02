@@ -51,6 +51,7 @@ export type TaskStatus =
   | "accepted"
   | "rejected"
   | "self-rejected"
+  | "cancelled"
   | "failed";
 
 export interface Task {
