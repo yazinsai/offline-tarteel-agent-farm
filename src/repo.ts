@@ -43,8 +43,13 @@ export function createWorktree(targetRepoPath: string, branch: string, baseBranc
   const worktreePath = join(worktreesDir, safeName);
   if (existsSync(worktreePath)) return worktreePath;
 
+  const branchExists = runCommand(`git show-ref --verify --quiet "refs/heads/${branch}"`, targetRepoPath);
+  const command =
+    branchExists.exitCode === 0
+      ? `git worktree add ".worktrees/${safeName}" "${branch}"`
+      : `git worktree add ".worktrees/${safeName}" -b "${branch}" "${baseBranch}"`;
   const result = runCommand(
-    `git worktree add ".worktrees/${safeName}" -b "${branch}" "${baseBranch}"`,
+    command,
     targetRepoPath,
     { GIT_LFS_SKIP_SMUDGE: "1" },
   );
