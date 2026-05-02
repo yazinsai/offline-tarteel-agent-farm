@@ -12,7 +12,7 @@
   "maxConcurrentWorkers": 3,
   "maxConcurrentEvaluations": 1,
   "minQueuedTasks": 2,
-  "staleWorkerMinutes": 180,
+  "staleWorkerMinutes": 30,
   "statePath": "/data/agent-farm/state.json",
   "baselineReports": {
     "v2": "web/frontend/test/stab-gate-on-v2.json",

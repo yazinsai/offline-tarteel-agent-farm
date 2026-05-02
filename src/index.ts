@@ -101,7 +101,7 @@ async function runDaemon(
   const sleepSeconds = Number(valueAfter(args, "--sleep-seconds") ?? "60");
   recoverInterruptedEvaluations(state);
   recoverInfrastructureFailures(state);
-  recoverStaleWorkers(config, state);
+  recoverStaleWorkers(config, state, { force: true, reason: "daemon startup" });
   saveState(config.statePath, state);
 
   console.log(`Starting daemon loop. sleep=${sleepSeconds}s aiPlanning=${useAi}`);
@@ -205,21 +205,23 @@ function recoverInterruptedEvaluations(state: ReturnType<typeof loadState>): voi
 function recoverStaleWorkers(
   config: ReturnType<typeof loadConfig>,
   state: ReturnType<typeof loadState>,
+  options: { force?: boolean; reason?: string } = {},
 ): void {
   const timestamp = new Date().toISOString();
   const cutoffMs = Date.now() - staleWorkerMinutes(config) * 60_000;
+  const reason = options.reason ?? "stale worker";
   for (const task of state.tasks) {
     if (task.status !== "running") continue;
     const heartbeat = Date.parse(task.workerHeartbeatAt ?? task.updatedAt);
-    if (Number.isFinite(heartbeat) && heartbeat >= cutoffMs) continue;
+    if (!options.force && Number.isFinite(heartbeat) && heartbeat >= cutoffMs) continue;
 
     const resultPath = task.worktreePath ? join(task.worktreePath, ".agent-farm", "result.json") : undefined;
     if (resultPath && existsSync(resultPath)) {
       task.status = "needs-eval";
-      task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered stale worker with result artifact at ${timestamp}.`;
+      task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered ${reason} with result artifact at ${timestamp}.`;
     } else {
       task.status = "queued";
-      task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered stale worker without result artifact at ${timestamp}.`;
+      task.notes = `${task.notes ? `${task.notes}\n` : ""}Recovered ${reason} without result artifact at ${timestamp}.`;
     }
     task.updatedAt = timestamp;
     task.workerHeartbeatAt = undefined;
