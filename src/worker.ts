@@ -21,9 +21,12 @@ export async function startWorkerForTask(
   state: FarmState,
   task: Task,
 ): Promise<void> {
+  const startedAt = now();
   task.status = "running";
-  task.updatedAt = now();
-  task.workerHeartbeatAt = task.updatedAt;
+  task.updatedAt = startedAt;
+  task.activeStartedAt = startedAt;
+  task.workerHeartbeatAt = startedAt;
+  task.lastCommand = undefined;
   upsertTask(state, task);
   saveState(config.statePath, state);
 
@@ -102,6 +105,7 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
     task.status = "needs-eval";
   }
   task.updatedAt = now();
+  task.lastCommand = undefined;
   upsertTask(state, task);
   saveState(config.statePath, state);
 }
@@ -109,20 +113,22 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
 function recordWorkerEvent(task: Task, event: unknown): Omit<TaskMessage, "at"> | undefined {
   const message = messageFromWorkerEvent(event);
   if (!message) return undefined;
+  if (message.command) task.lastCommand = message.command;
+  const taskMessage = { kind: message.kind, text: message.text };
   const timestamp = now();
   const recent = task.recentMessages ?? [];
   const last = recent.at(-1);
-  if (message.kind === "assistant" && last?.kind === "assistant") {
+  if (taskMessage.kind === "assistant" && last?.kind === "assistant") {
     last.at = timestamp;
-    last.text = compactMessage(`${last.text}${message.text}`);
+    last.text = compactMessage(`${last.text}${taskMessage.text}`);
   } else {
-    recent.push({ at: timestamp, ...message });
+    recent.push({ at: timestamp, ...taskMessage });
   }
   task.recentMessages = recent.slice(-8);
-  return message;
+  return taskMessage;
 }
 
-function messageFromWorkerEvent(event: unknown): Omit<TaskMessage, "at"> | undefined {
+function messageFromWorkerEvent(event: unknown): (Omit<TaskMessage, "at"> & { command?: string }) | undefined {
   if (!event || typeof event !== "object") return undefined;
   const payload = event as {
     type?: string;
@@ -148,6 +154,7 @@ function messageFromWorkerEvent(event: unknown): Omit<TaskMessage, "at"> | undef
     return {
       kind: "tool",
       text: compactMessage(`${payload.name ?? "tool"} ${payload.status ?? "event"}${suffix ? `: ${suffix}` : ""}`),
+      command,
     };
   }
 

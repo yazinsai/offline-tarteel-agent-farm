@@ -18,10 +18,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cursor/sdk": "latest"
+    "@cursor/sdk": "latest",
+    "ink": "^6.8.0",
+    "react": "^19.2.5"
   },
   "devDependencies": {
     "@types/node": "latest",
+    "@types/react": "^19.2.14",
     "tsx": "latest",
     "typescript": "latest"
   }

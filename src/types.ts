@@ -66,6 +66,8 @@ export interface Task {
   cursorRunId?: string;
   cursorAgentId?: string;
   workerHeartbeatAt?: string;
+  activeStartedAt?: string;
+  lastCommand?: string;
   recentMessages?: TaskMessage[];
   evalProgress?: EvalProgress;
   workerResult?: WorkerResult;

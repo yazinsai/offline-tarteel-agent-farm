@@ -41,8 +41,10 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
   mkdirSync(artifactDir, { recursive: true });
   ensureEvaluationAssets(config, repoPath);
 
+  const startedAt = now();
   task.status = "evaluating";
-  task.updatedAt = now();
+  task.activeStartedAt = startedAt;
+  task.updatedAt = startedAt;
   upsertTask(state, task);
   saveState(config.statePath, state);
 
@@ -74,6 +76,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
     task.status = "rejected";
     task.notes = "Rejected after dev corpus: Final ExactSet below 45%.";
     task.updatedAt = now();
+    task.lastCommand = undefined;
     upsertTask(state, task);
     saveState(config.statePath, state);
     return;
@@ -114,6 +117,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
 
   task.status = "promising";
   task.updatedAt = now();
+  task.lastCommand = undefined;
   upsertTask(state, task);
   saveState(config.statePath, state);
 }
@@ -234,6 +238,7 @@ async function runParallelStability(
   });
 
   console.log(`\n[${task.id}] ${corpus} x${repeats}: ${samples.length} samples across ${shardCount} shards`);
+  task.lastCommand = `stability ${corpus} x${repeats} across ${shardCount} shard${shardCount === 1 ? "" : "s"}`;
   startEvalProgress(config, state, task, corpus, repeats, evaluationRemoteBackend(config), commands);
   const modalBundlePath =
     evaluationRemoteBackend(config) === "modal"
@@ -305,6 +310,7 @@ async function runParallelStability(
     task.status = "failed";
     task.notes = `Command failed: ${run.command}`;
     task.updatedAt = now();
+    task.lastCommand = undefined;
     upsertTask(state, task);
     saveState(config.statePath, state);
     const failed = results.find((result) => result.exitCode !== 0);
@@ -405,6 +411,10 @@ function runChecked(
 ): RunRecord {
   console.log(`\n[${task.id}] ${command}`);
   const startedAt = now();
+  task.lastCommand = command;
+  task.updatedAt = startedAt;
+  upsertTask(state, task);
+  if (config) saveState(config.statePath, state);
   const result = runCommand(command, cwd);
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
@@ -433,6 +443,7 @@ function runChecked(
     task.status = "failed";
     task.notes = `Command failed: ${command}`;
     task.updatedAt = now();
+    task.lastCommand = undefined;
     upsertTask(state, task);
     if (config) saveState(config.statePath, state);
     throw new Error(result.stderr || result.stdout);
@@ -712,6 +723,7 @@ function finishEvalProgress(config: FarmConfig, state: FarmState, task: Task): v
   if (!task.evalProgress) return;
   task.evalProgress.updatedAt = now();
   task.updatedAt = task.evalProgress.updatedAt;
+  task.lastCommand = undefined;
   upsertTask(state, task);
   saveState(config.statePath, state);
 }
