@@ -7,7 +7,7 @@ import { runDashboard } from "./dashboard.js";
 import { evaluateTask } from "./evaluator.js";
 import { judgeTask } from "./judge.js";
 import { enqueueHypothesis, planTasks } from "./planner.js";
-import { now, saveState, findTaskOrThrow, loadState, mergeFarmState } from "./state.js";
+import { now, saveStateMerged, findTaskOrThrow, loadState } from "./state.js";
 import { buildSplits } from "./splits.js";
 import { startNextWorker, startWorkerForTask } from "./worker.js";
 
@@ -115,7 +115,7 @@ async function main(): Promise<void> {
         throw new Error(`Unknown command: ${command}`);
     }
   } finally {
-    saveState(config.statePath, state);
+    saveStateMerged(config.statePath, state);
   }
 }
 
@@ -130,7 +130,7 @@ async function runDaemon(
   recoverInterruptedEvaluations(daemonState);
   recoverInfrastructureFailures(daemonState);
   recoverStaleWorkers(config, daemonState, { force: true, reason: "daemon startup" });
-  saveState(config.statePath, daemonState);
+  saveStateMerged(config.statePath, daemonState);
 
   console.log(`Starting daemon loop. sleep=${sleepSeconds}s aiPlanning=${useAi}`);
   for (;;) {
@@ -139,12 +139,11 @@ async function runDaemon(
       // when the next saveState runs (previously in-memory state was stale forever).
       daemonState = loadState(config.statePath);
       await runLoop(config, daemonState, ["--cycles", "1", ...(useAi ? ["--ai"] : [])]);
-      daemonState = mergeFarmState(loadState(config.statePath), daemonState);
-      saveState(config.statePath, daemonState);
+      saveStateMerged(config.statePath, daemonState);
     } catch (error) {
       console.error("Daemon cycle failed:");
       console.error(error);
-      saveState(config.statePath, mergeFarmState(loadState(config.statePath), daemonState));
+      saveStateMerged(config.statePath, daemonState);
     }
 
     await sleep(sleepSeconds * 1000);

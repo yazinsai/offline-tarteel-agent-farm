@@ -17,7 +17,7 @@ import type {
 import { normalizeStabilityMetrics, stabilityMetricsFromReport } from "./types.js";
 import { ensureSymlink, readJson, writeJson } from "./fs.js";
 import { runCommand } from "./repo.js";
-import { addRun, makeId, now, saveState, upsertTask } from "./state.js";
+import { addRun, makeId, now, saveStateMerged, upsertTask } from "./state.js";
 
 export async function evaluateTask(config: FarmConfig, state: FarmState, task: Task): Promise<void> {
   if (task.status === "self-rejected") {
@@ -31,7 +31,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
       `${(task.workerResult.devMetrics.finalExactSet * 100).toFixed(1)}% < 45.0%.`;
     task.updatedAt = now();
     upsertTask(state, task);
-    saveState(config.statePath, state);
+    saveStateMerged(config.statePath, state);
     return;
   }
 
@@ -46,7 +46,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
   task.activeStartedAt = startedAt;
   task.updatedAt = startedAt;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 
   runChecked(
     "[ -d node_modules ] || npm install",
@@ -78,7 +78,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
     task.updatedAt = now();
     task.lastCommand = undefined;
     upsertTask(state, task);
-    saveState(config.statePath, state);
+    saveStateMerged(config.statePath, state);
     return;
   }
 
@@ -119,7 +119,7 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
   task.updatedAt = now();
   task.lastCommand = undefined;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 }
 
 function ensureEvaluationAssets(config: FarmConfig, repoPath: string): void {
@@ -304,7 +304,7 @@ async function runParallelStability(
   }
 
   addRun(state, run);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 
   if (exitCode !== 0) {
     task.status = "failed";
@@ -312,7 +312,7 @@ async function runParallelStability(
     task.updatedAt = now();
     task.lastCommand = undefined;
     upsertTask(state, task);
-    saveState(config.statePath, state);
+    saveStateMerged(config.statePath, state);
     const failed = results.find((result) => result.exitCode !== 0);
     throw new Error(failed?.stderr || failed?.stdout || `Parallel stability failed with exit ${exitCode}`);
   }
@@ -414,7 +414,7 @@ function runChecked(
   task.lastCommand = command;
   task.updatedAt = startedAt;
   upsertTask(state, task);
-  if (config) saveState(config.statePath, state);
+  if (config) saveStateMerged(config.statePath, state);
   const result = runCommand(command, cwd);
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
@@ -437,7 +437,7 @@ function runChecked(
   }
 
   addRun(state, run);
-  if (config) saveState(config.statePath, state);
+  if (config) saveStateMerged(config.statePath, state);
 
   if (result.exitCode !== 0) {
     task.status = "failed";
@@ -445,7 +445,7 @@ function runChecked(
     task.updatedAt = now();
     task.lastCommand = undefined;
     upsertTask(state, task);
-    if (config) saveState(config.statePath, state);
+    if (config) saveStateMerged(config.statePath, state);
     throw new Error(result.stderr || result.stdout);
   }
 
@@ -696,7 +696,7 @@ function startEvalProgress(
   };
   task.updatedAt = timestamp;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 }
 
 function updateShardProgress(
@@ -716,7 +716,7 @@ function updateShardProgress(
   task.evalProgress.failedShards = task.evalProgress.shards.filter((candidate) => candidate.status === "failed").length;
   task.updatedAt = timestamp;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 }
 
 function finishEvalProgress(config: FarmConfig, state: FarmState, task: Task): void {
@@ -725,7 +725,7 @@ function finishEvalProgress(config: FarmConfig, state: FarmState, task: Task): v
   task.updatedAt = task.evalProgress.updatedAt;
   task.lastCommand = undefined;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 }
 
 function createModalBundle(repoPath: string, bundlePath: string): void {

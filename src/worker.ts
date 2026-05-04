@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { FarmConfig, FarmState, Task, TaskMessage, WorkerResult } from "./types.js";
 import { createWorktree } from "./repo.js";
 import { readJson } from "./fs.js";
-import { now, saveState, upsertTask } from "./state.js";
+import { now, saveStateMerged, upsertTask } from "./state.js";
 
 export async function startNextWorker(config: FarmConfig, state: FarmState): Promise<void> {
   const task = state.tasks.find((candidate) => candidate.status === "queued");
@@ -28,7 +28,7 @@ export async function startWorkerForTask(
   task.workerHeartbeatAt = startedAt;
   task.lastCommand = undefined;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 
   try {
     if (config.mode === "cloud") {
@@ -41,7 +41,7 @@ export async function startWorkerForTask(
     task.notes = error instanceof Error ? error.message : String(error);
     task.updatedAt = now();
     upsertTask(state, task);
-    saveState(config.statePath, state);
+    saveStateMerged(config.statePath, state);
     throw error;
   }
 }
@@ -51,7 +51,7 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   task.worktreePath = worktreePath;
   task.updatedAt = now();
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 
   const { Agent } = await import("@cursor/sdk");
   const agent = await Agent.create({
@@ -81,14 +81,14 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
       lastMessageSaveMs = heartbeatMs;
       task.updatedAt = now();
       upsertTask(state, task);
-      saveState(config.statePath, state);
+      saveStateMerged(config.statePath, state);
     }
     if (heartbeatMs - lastHeartbeatMs > 60_000) {
       lastHeartbeatMs = heartbeatMs;
       task.workerHeartbeatAt = now();
       task.updatedAt = task.workerHeartbeatAt;
       upsertTask(state, task);
-      saveState(config.statePath, state);
+      saveStateMerged(config.statePath, state);
     }
   }
   writeFileSync(logPath, log);
@@ -107,7 +107,7 @@ async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task
   task.updatedAt = now();
   task.lastCommand = undefined;
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 }
 
 function recordWorkerEvent(task: Task, event: unknown): Omit<TaskMessage, "at"> | undefined {
@@ -209,7 +209,7 @@ async function startCloudWorker(config: FarmConfig, state: FarmState, task: Task
   task.cursorAgentId = run.agentId;
   task.updatedAt = now();
   upsertTask(state, task);
-  saveState(config.statePath, state);
+  saveStateMerged(config.statePath, state);
 
   console.log(`Started cloud worker for ${task.id}`);
   console.log(`runId=${run.id}`);

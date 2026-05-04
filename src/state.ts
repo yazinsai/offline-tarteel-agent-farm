@@ -36,19 +36,34 @@ export function upsertTask(state: FarmState, task: Task): void {
   }
 }
 
+function mergeTaskLists(disk: Task[], memory: Task[]): Task[] {
+  const byId = new Map<string, Task>();
+  for (const task of disk) byId.set(task.id, task);
+  for (const task of memory) {
+    const existing = byId.get(task.id);
+    if (!existing || task.updatedAt >= existing.updatedAt) byId.set(task.id, task);
+  }
+  return [...byId.values()];
+}
+
 /** Overlay `memory` onto a fresh `disk` read so one-shot writers (enqueue) are not lost on save. */
 export function mergeFarmState(disk: FarmState, memory: FarmState): FarmState {
-  const taskById = new Map(disk.tasks.map((task) => [task.id, task]));
-  for (const task of memory.tasks) taskById.set(task.id, task);
+  const tasks = mergeTaskLists(disk.tasks, memory.tasks);
   const runById = new Map(disk.runs.map((run) => [run.id, run]));
   for (const run of memory.runs) runById.set(run.id, run);
   const decisionById = new Map(disk.decisions.map((decision) => [decision.id, decision]));
   for (const decision of memory.decisions) decisionById.set(decision.id, decision);
   return {
-    tasks: [...taskById.values()],
+    tasks,
     runs: [...runById.values()],
     decisions: [...decisionById.values()],
   };
+}
+
+/** Persist while preserving any concurrent updates already on disk (last-write wins per task by `updatedAt`). */
+export function saveStateMerged(statePath: string, memory: FarmState): void {
+  const disk = loadState(statePath);
+  saveState(statePath, mergeFarmState(disk, memory));
 }
 
 export function addRun(state: FarmState, run: RunRecord): void {
