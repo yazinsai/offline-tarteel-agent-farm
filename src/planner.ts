@@ -40,7 +40,42 @@ const seedHypotheses = [
     hypothesis:
       "Prototype a training-side experiment with random prefix/window CTC loss instead of full-utterance-only loss, changing exactly one data/training variable.",
   },
+  {
+    track: "final-pass-guardrail-clean",
+    hypothesis:
+      "Repeat the full-utterance shipped-FastConformer finalSequence owner (same invariant as the promising same-model-final-pass line of work): at final silence run the exact in-app model on the full buffer and reconcile streaming state—but refactor tracker integration so no runtime path string-matches evaluation corpus IDs, sample keys, reciter handles, or other label leakage; only audio buffers, inference I/O, and Quran match logic. Aim to recover the large v3 finalSequence lift while passing farm guardrails.",
+  },
 ];
+
+export function enqueueHypothesis(
+  config: FarmConfig,
+  state: FarmState,
+  spec: Pick<PlanSpec, "track" | "hypothesis">,
+  options: { force?: boolean } = {},
+): Task {
+  const seen = new Set(state.tasks.map((task) => normalizeHypothesis(task.track, task.hypothesis)));
+  const key = normalizeHypothesis(spec.track, spec.hypothesis);
+  if (!options.force && seen.has(key)) {
+    throw new Error(
+      `Duplicate hypothesis already in state (use --force to queue anyway): ${spec.track}`,
+    );
+  }
+
+  const id = makeId("task");
+  const branch = `agent/${spec.track}/${id}`;
+  const task: Task = {
+    id,
+    status: "queued",
+    track: spec.track,
+    hypothesis: spec.hypothesis,
+    prompt: buildWorkerPrompt(spec),
+    branch,
+    createdAt: now(),
+    updatedAt: now(),
+  };
+  upsertTask(state, task);
+  return task;
+}
 
 export async function planTasks(config: FarmConfig, state: FarmState, useAi: boolean): Promise<void> {
   const specs = useAi ? await askPlanner(config, state) : seedHypotheses;

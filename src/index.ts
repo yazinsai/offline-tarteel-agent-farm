@@ -1,13 +1,13 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { analyzeReports, printDiff } from "./analyze.js";
-import { hasFlag, loadConfig, valueAfter } from "./config.js";
+import { hasFlag, isFarmPaused, loadConfig, resolvePauseFilePath, valueAfter } from "./config.js";
 import { runDashboard } from "./dashboard.js";
 import { evaluateTask } from "./evaluator.js";
 import { judgeTask } from "./judge.js";
-import { planTasks } from "./planner.js";
-import { saveState, findTaskOrThrow, loadState } from "./state.js";
+import { enqueueHypothesis, planTasks } from "./planner.js";
+import { now, saveState, findTaskOrThrow, loadState } from "./state.js";
 import { buildSplits } from "./splits.js";
 import { startNextWorker, startWorkerForTask } from "./worker.js";
 
@@ -25,6 +25,33 @@ async function main(): Promise<void> {
       case "plan":
         await planTasks(config, state, hasFlag(args, "--ai"));
         break;
+
+      case "enqueue": {
+        const track = valueAfter(args, "--track");
+        const hypothesis = valueAfter(args, "--hypothesis");
+        if (!track || !hypothesis) {
+          throw new Error(
+            'Usage: npm run enqueue -- --config <file> --track <slug> --hypothesis "..." [--force]',
+          );
+        }
+        const task = enqueueHypothesis(config, state, { track, hypothesis }, { force: hasFlag(args, "--force") });
+        console.log(`Queued ${task.id}: ${task.track}`);
+        break;
+      }
+
+      case "pause": {
+        const path = resolvePauseFilePath(config);
+        writeFileSync(path, `${now()}\n`);
+        console.log(`Paused (created ${path}). New workers and planning are skipped until resume.`);
+        break;
+      }
+
+      case "resume": {
+        const path = resolvePauseFilePath(config);
+        if (existsSync(path)) unlinkSync(path);
+        console.log(`Resumed (removed ${path} if it existed).`);
+        break;
+      }
 
       case "work": {
         const taskId = valueAfter(args, "--task");
@@ -69,7 +96,7 @@ async function main(): Promise<void> {
         break;
 
       case "status":
-        printStatus(state);
+        printStatus(state, config);
         break;
 
       case "prune-queue": {
@@ -131,7 +158,11 @@ async function runLoop(
   recoverInfrastructureFailures(state);
   recoverStaleWorkers(config, state);
   buildSplits(config);
-  if (queuedTasks(state).length < minQueuedTasks(config)) {
+  const pausedHere = isFarmPaused(config);
+  if (pausedHere) {
+    console.log("Farm is paused: planning and new workers are skipped (eval/judge for needs-eval still runs).");
+  }
+  if (!pausedHere && queuedTasks(state).length < minQueuedTasks(config)) {
     await planTasks(config, state, useAi);
   }
 
@@ -141,6 +172,11 @@ async function runLoop(
       await evaluateTask(config, state, evalTask);
       judgeTask(config, state, evalTask);
       continue;
+    }
+
+    if (isFarmPaused(config)) {
+      console.log("Farm paused: not starting workers. Clear PAUSED file or AGENT_FARM_PAUSED to continue.");
+      return;
     }
 
     const availableWorkerSlots = Math.max(
@@ -172,7 +208,10 @@ async function runWorkerBatch(
   }
 }
 
-function printStatus(state: ReturnType<typeof loadState>): void {
+function printStatus(state: ReturnType<typeof loadState>, config?: ReturnType<typeof loadConfig>): void {
+  if (config && isFarmPaused(config)) {
+    console.log(`Farm: PAUSED (${resolvePauseFilePath(config)} or AGENT_FARM_PAUSED)\n`);
+  }
   const counts = new Map<string, number>();
   for (const task of state.tasks) {
     counts.set(task.status, (counts.get(task.status) ?? 0) + 1);

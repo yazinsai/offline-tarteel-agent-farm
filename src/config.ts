@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import type { FarmConfig } from "./types.js";
 
@@ -27,4 +27,19 @@ export function valueAfter(args: string[], name: string): string | undefined {
 
 export function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
+}
+
+/** Path to the pause sentinel file (empty file = paused). */
+export function resolvePauseFilePath(config: FarmConfig): string {
+  if (config.pauseFilePath) {
+    return resolve(process.cwd(), config.pauseFilePath);
+  }
+  return join(dirname(resolve(process.cwd(), config.statePath)), "PAUSED");
+}
+
+/** True when AGENT_FARM_PAUSED is set or the pause file exists on disk. */
+export function isFarmPaused(config: FarmConfig): boolean {
+  const raw = process.env.AGENT_FARM_PAUSED?.trim().toLowerCase();
+  if (raw === "1" || raw === "true" || raw === "yes") return true;
+  return existsSync(resolvePauseFilePath(config));
 }

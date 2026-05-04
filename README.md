@@ -103,6 +103,23 @@ git remote add dokku dokku-server:offline-tarteel-agent-farm
 git push dokku main
 ```
 
+**Pause before redeploy** (persistent volume; survives container restart): while the sentinel exists, the daemon **does not** run `plan` or start **new** workers, but still finishes **`needs-eval`** (Modal eval + judge) so in-flight tasks are not stranded mid-pipeline.
+
+```bash
+# pause (from repo root inside a one-off run, or touch the host path below)
+ssh dokku-server 'dokku run offline-tarteel-agent-farm npm run pause -- --config config.dokku.json'
+
+# optional: wait until no task is "running" (manual)
+ssh dokku-server 'dokku run offline-tarteel-agent-farm npm run status -- --config config.dokku.json'
+
+git push dokku main
+
+# resume
+ssh dokku-server 'dokku run offline-tarteel-agent-farm npm run resume -- --config config.dokku.json'
+```
+
+Equivalent host file: `touch /var/lib/dokku/data/storage/offline-tarteel-agent-farm/agent-farm/PAUSED` (same as `/data/agent-farm/PAUSED` in the container). Optional env (requires restart): `AGENT_FARM_PAUSED=1`.
+
 One-off commands:
 
 ```bash

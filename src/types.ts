@@ -16,6 +16,8 @@ export interface FarmConfig {
   minQueuedTasks?: number;
   staleWorkerMinutes?: number;
   statePath: string;
+  /** If set, this file’s presence pauses the farm; if unset, uses <dirname(statePath)>/PAUSED */
+  pauseFilePath?: string;
   baselineReports: {
     v2: string;
     v3: string;

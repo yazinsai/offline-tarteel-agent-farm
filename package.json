@@ -7,6 +7,7 @@
     "start": "tsx src/index.ts",
     "build-splits": "tsx src/index.ts build-splits",
     "plan": "tsx src/index.ts plan",
+    "enqueue": "tsx src/index.ts enqueue",
     "work": "tsx src/index.ts work",
     "eval": "tsx src/index.ts eval",
     "judge": "tsx src/index.ts judge",
@@ -14,6 +15,8 @@
     "daemon": "tsx src/index.ts daemon",
     "analyze": "tsx src/index.ts analyze",
     "status": "tsx src/index.ts status",
+    "pause": "tsx src/index.ts pause",
+    "resume": "tsx src/index.ts resume",
     "dashboard": "tsx src/index.ts dashboard",
     "typecheck": "tsc --noEmit"
   },
