@@ -162,9 +162,6 @@ async function runLoop(
   if (pausedHere) {
     console.log("Farm is paused: planning and new workers are skipped (eval/judge for needs-eval still runs).");
   }
-  if (!pausedHere && queuedTasks(state).length < minQueuedTasks(config)) {
-    await planTasks(config, state, useAi);
-  }
 
   for (let i = 0; i < cycles; i++) {
     const evalTask = state.tasks.find((candidate) => candidate.status === "needs-eval");
@@ -186,10 +183,14 @@ async function runLoop(
     const tasks = queuedTasks(state).slice(0, availableWorkerSlots);
     if (tasks.length === 0) {
       console.log("No queued tasks left.");
-      return;
+      break;
     }
 
     await runWorkerBatch(config, state, tasks);
+  }
+
+  if (!pausedHere && queuedTasks(state).length < minQueuedTasks(config)) {
+    await planTasks(config, state, useAi);
   }
 }
 
