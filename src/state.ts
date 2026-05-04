@@ -36,6 +36,21 @@ export function upsertTask(state: FarmState, task: Task): void {
   }
 }
 
+/** Overlay `memory` onto a fresh `disk` read so one-shot writers (enqueue) are not lost on save. */
+export function mergeFarmState(disk: FarmState, memory: FarmState): FarmState {
+  const taskById = new Map(disk.tasks.map((task) => [task.id, task]));
+  for (const task of memory.tasks) taskById.set(task.id, task);
+  const runById = new Map(disk.runs.map((run) => [run.id, run]));
+  for (const run of memory.runs) runById.set(run.id, run);
+  const decisionById = new Map(disk.decisions.map((decision) => [decision.id, decision]));
+  for (const decision of memory.decisions) decisionById.set(decision.id, decision);
+  return {
+    tasks: [...taskById.values()],
+    runs: [...runById.values()],
+    decisions: [...decisionById.values()],
+  };
+}
+
 export function addRun(state: FarmState, run: RunRecord): void {
   state.runs.push(run);
 }

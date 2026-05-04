@@ -7,7 +7,7 @@ import { runDashboard } from "./dashboard.js";
 import { evaluateTask } from "./evaluator.js";
 import { judgeTask } from "./judge.js";
 import { enqueueHypothesis, planTasks } from "./planner.js";
-import { now, saveState, findTaskOrThrow, loadState } from "./state.js";
+import { now, saveState, findTaskOrThrow, loadState, mergeFarmState } from "./state.js";
 import { buildSplits } from "./splits.js";
 import { startNextWorker, startWorkerForTask } from "./worker.js";
 
@@ -126,20 +126,25 @@ async function runDaemon(
 ): Promise<void> {
   const useAi = hasFlag(args, "--ai");
   const sleepSeconds = Number(valueAfter(args, "--sleep-seconds") ?? "60");
-  recoverInterruptedEvaluations(state);
-  recoverInfrastructureFailures(state);
-  recoverStaleWorkers(config, state, { force: true, reason: "daemon startup" });
-  saveState(config.statePath, state);
+  let daemonState = state;
+  recoverInterruptedEvaluations(daemonState);
+  recoverInfrastructureFailures(daemonState);
+  recoverStaleWorkers(config, daemonState, { force: true, reason: "daemon startup" });
+  saveState(config.statePath, daemonState);
 
   console.log(`Starting daemon loop. sleep=${sleepSeconds}s aiPlanning=${useAi}`);
   for (;;) {
     try {
-      await runLoop(config, state, ["--cycles", "1", ...(useAi ? ["--ai"] : [])]);
-      saveState(config.statePath, state);
+      // Reload so `dokku run enqueue` / other one-shots that mutate state.json are not undone
+      // when the next saveState runs (previously in-memory state was stale forever).
+      daemonState = loadState(config.statePath);
+      await runLoop(config, daemonState, ["--cycles", "1", ...(useAi ? ["--ai"] : [])]);
+      daemonState = mergeFarmState(loadState(config.statePath), daemonState);
+      saveState(config.statePath, daemonState);
     } catch (error) {
       console.error("Daemon cycle failed:");
       console.error(error);
-      saveState(config.statePath, state);
+      saveState(config.statePath, mergeFarmState(loadState(config.statePath), daemonState));
     }
 
     await sleep(sleepSeconds * 1000);
