@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { Decision, FarmState, RunRecord, Task } from "./types.js";
+import type { Decision, FarmBaseline, FarmState, PromotionRecord, RunRecord, Task } from "./types.js";
 
 export function now(): string {
   return new Date().toISOString();
@@ -46,6 +46,12 @@ function mergeTaskLists(disk: Task[], memory: Task[]): Task[] {
   return [...byId.values()];
 }
 
+function newerBaseline(a?: FarmBaseline, b?: FarmBaseline): FarmBaseline | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return b.updatedAt >= a.updatedAt ? b : a;
+}
+
 /** Overlay `memory` onto a fresh `disk` read so one-shot writers (enqueue) are not lost on save. */
 export function mergeFarmState(disk: FarmState, memory: FarmState): FarmState {
   const tasks = mergeTaskLists(disk.tasks, memory.tasks);
@@ -53,10 +59,14 @@ export function mergeFarmState(disk: FarmState, memory: FarmState): FarmState {
   for (const run of memory.runs) runById.set(run.id, run);
   const decisionById = new Map(disk.decisions.map((decision) => [decision.id, decision]));
   for (const decision of memory.decisions) decisionById.set(decision.id, decision);
+  const promotionById = new Map((disk.promotions ?? []).map((promotion) => [promotion.id, promotion]));
+  for (const promotion of memory.promotions ?? []) promotionById.set(promotion.id, promotion);
   return {
     tasks,
     runs: [...runById.values()],
     decisions: [...decisionById.values()],
+    baseline: newerBaseline(disk.baseline, memory.baseline),
+    promotions: [...promotionById.values()],
   };
 }
 
@@ -72,6 +82,10 @@ export function addRun(state: FarmState, run: RunRecord): void {
 
 export function addDecision(state: FarmState, decision: Decision): void {
   state.decisions.push(decision);
+}
+
+export function addPromotion(state: FarmState, promotion: PromotionRecord): void {
+  state.promotions = [...(state.promotions ?? []), promotion];
 }
 
 export function findTaskOrThrow(state: FarmState, taskId: string): Task {

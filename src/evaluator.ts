@@ -82,16 +82,18 @@ export async function evaluateTask(config: FarmConfig, state: FarmState, task: T
     return;
   }
 
-  await runStability(
-    config,
-    state,
-    task,
-    repoPath,
-    frontendPath,
-    artifactDir,
-    "test_corpus_v2",
-    config.evaluation.repeatsGate,
-  );
+  if (config.evaluation.includeV2Gate === true) {
+    await runStability(
+      config,
+      state,
+      task,
+      repoPath,
+      frontendPath,
+      artifactDir,
+      "test_corpus_v2",
+      config.evaluation.repeatsGate,
+    );
+  }
 
   await runStability(
     config,

@@ -14,6 +14,11 @@
   "minQueuedTasks": 8,
   "staleWorkerMinutes": 30,
   "statePath": "runs/state.json",
+  "promotion": {
+    "baseBranch": "agent-farm/base",
+    "minV3Delta": 0.03,
+    "autoPromote": true
+  },
   "baselineReports": {
     "v2": "web/frontend/test/stab-gate-on-v2.json",
     "v3": "web/frontend/test/stab-gate-on-v3.json"
@@ -22,6 +27,7 @@
     "targetSeqAcc": 0.9,
     "minPrecision": 0.72,
     "v2SeqAccRegressionTolerance": 0.01,
+    "includeV2Gate": false,
     "remoteBackend": "local",
     "parallelShards": 4,
     "modal": {

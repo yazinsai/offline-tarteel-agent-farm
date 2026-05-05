@@ -8,19 +8,16 @@ import { addDecision, makeId, now, upsertTask } from "./state.js";
 
 export function judgeTask(config: FarmConfig, state: FarmState, task: Task): Decision {
   const fullRun = latestRun(state.runs, task.id, config.evaluation.fullCorpus);
-  const v2Run = latestRun(state.runs, task.id, "test_corpus_v2");
 
-  if (!fullRun?.metrics || !v2Run?.metrics) {
-    return decide(state, task, "rejected", "Missing full v3 or v2 gate run.");
+  if (!fullRun?.metrics) {
+    return decide(state, task, "rejected", "Missing full v3 run.");
   }
   const fullMetrics = normalizeStabilityMetrics(fullRun.metrics);
 
-  const baselineV3 = join(config.targetRepoPath, config.baselineReports.v3);
-  const baselineV2 = join(config.targetRepoPath, config.baselineReports.v2);
+  const baselineV3 = state.baseline?.v3ArtifactPath ?? join(config.targetRepoPath, config.baselineReports.v3);
   const v3Diff = analyzeReports(baselineV3, fullRun.artifactPath);
-  const v2Diff = analyzeReports(baselineV2, v2Run.artifactPath);
   task.guardrails = runGuardrails(config, task);
-  task.analysis = buildAnalysis(config, fullMetrics.medianPrecision, v3Diff, v2Diff);
+  task.analysis = buildAnalysis(config, fullMetrics.medianPrecision, v3Diff);
 
   const reasons: string[] = [];
   if (!task.guardrails.passed) {
@@ -43,9 +40,6 @@ export function judgeTask(config: FarmConfig, state: FarmState, task: Task): Dec
         `${(config.evaluation.minPrecision * 100).toFixed(1)}% minimum`,
     );
   }
-  if (v2Diff.delta.finalExactSet < -config.evaluation.v2SeqAccRegressionTolerance) {
-    reasons.push(`v2 Final ExactSet regressed by ${(v2Diff.delta.finalExactSet * 100).toFixed(1)}pp`);
-  }
   if (v3Diff.regressed.length > v3Diff.improved.length / 2 && v3Diff.regressed.length >= 8) {
     reasons.push(`too many v3 regressions: ${v3Diff.regressed.length}`);
   }
@@ -56,12 +50,11 @@ export function judgeTask(config: FarmConfig, state: FarmState, task: Task): Dec
       task,
       "accepted",
       `Accepted: v3 Final ExactSet ${(fullMetrics.medianExactSetAcc * 100).toFixed(1)}%, ` +
-        `precision ${(fullMetrics.medianPrecision * 100).toFixed(1)}%, ` +
-        `v2 Final ExactSet delta ${(v2Diff.delta.finalExactSet * 100).toFixed(1)}pp.`,
+        `precision ${(fullMetrics.medianPrecision * 100).toFixed(1)}%.`,
     );
   }
 
-  const materiallyBetter = v3Diff.delta.finalExactSet >= 0.03 && v2Diff.delta.finalExactSet >= -0.005;
+  const materiallyBetter = v3Diff.delta.finalExactSet >= (config.promotion?.minV3Delta ?? 0.03);
   if (materiallyBetter) {
     return decide(state, task, "promising", `Promising but not target: ${reasons.join("; ")}`);
   }
@@ -73,17 +66,11 @@ function buildAnalysis(
   config: FarmConfig,
   precision: number,
   v3Diff: StabilityDiff,
-  v2Diff: StabilityDiff,
 ): Task["analysis"] {
   const precisionPenalty = Math.max(0, config.evaluation.minPrecision - precision);
-  const v2RegressionPenalty = Math.max(
-    0,
-    -v2Diff.delta.finalExactSet - config.evaluation.v2SeqAccRegressionTolerance,
-  );
   const broadRegressionPenalty = clusterCount(v3Diff.regressed, 8);
   const score =
     100 * v3Diff.delta.finalExactSet -
-    150 * v2RegressionPenalty -
     100 * precisionPenalty -
     2 * broadRegressionPenalty;
 
@@ -100,22 +87,18 @@ function buildAnalysis(
       rawCommitOrderedSeq: v3Diff.delta.rawCommitOrderedSeq,
     },
     v2: {
-      precision: v2Diff.delta.precision,
-      recall: v2Diff.delta.recall,
-      finalExactSet: v2Diff.delta.finalExactSet,
-      finalOrderedSeq: v2Diff.delta.finalOrderedSeq,
-      rawCommitPrecision: v2Diff.delta.rawCommitPrecision,
-      rawCommitRecall: v2Diff.delta.rawCommitRecall,
-      rawCommitExactSet: v2Diff.delta.rawCommitExactSet,
-      rawCommitOrderedSeq: v2Diff.delta.rawCommitOrderedSeq,
+      precision: 0,
+      recall: 0,
+      finalExactSet: 0,
+      finalOrderedSeq: 0,
     },
     failureClusters: clusters(v3Diff.regressed),
     improvementClusters: clusters(v3Diff.improved),
     regressionClusters: clusters(v3Diff.regressed),
     lesson:
       `score ${score.toFixed(2)}; v3 Final ExactSet ${pct(v3Diff.delta.finalExactSet)}, ` +
-      `v2 Final ExactSet ${pct(v2Diff.delta.finalExactSet)}, precision ${pct(v3Diff.delta.precision)}`,
-    suspicious: [...v3Diff.suspicious, ...v2Diff.suspicious],
+      `precision ${pct(v3Diff.delta.precision)}`,
+    suspicious: [...v3Diff.suspicious],
   };
 }
 

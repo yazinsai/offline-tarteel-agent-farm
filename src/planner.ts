@@ -189,6 +189,17 @@ function summarizeHistory(state: FarmState): string {
   }
 
   const decisions = new Map(state.decisions.map((decision) => [decision.taskId, decision]));
+  const baseline = state.baseline
+    ? [
+        `Active promoted base: ${state.baseline.branch}@${state.baseline.head}`,
+        state.baseline.v3FinalExactSet !== undefined
+          ? `Current base V3 Final ExactSet: ${(state.baseline.v3FinalExactSet * 100).toFixed(2)}%`
+          : "",
+        `Promoted task ids: ${state.baseline.sourceTaskIds.join(", ") || "none"}`,
+        "Future hypotheses should build on this base, not repeat mechanisms already promoted.",
+        "",
+      ].filter(Boolean).join("\n")
+    : "Active promoted base: none; workers currently build from configured base branch.\n\n";
   const lines = state.tasks.filter((task) => task.status !== "cancelled").slice(-30).map((task) => {
     const decision = decisions.get(task.id);
     const runs = state.runs
@@ -222,7 +233,7 @@ function summarizeHistory(state: FarmState): string {
     ].filter(Boolean).join("\n");
   });
 
-  return lines.join("\n");
+  return `${baseline}${lines.join("\n")}`;
 }
 
 function formatClusters(clusters: Array<{ category: string; count: number }>): string {

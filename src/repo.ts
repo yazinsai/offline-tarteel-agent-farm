@@ -35,6 +35,16 @@ export function assertCleanEnough(repoPath: string): void {
   }
 }
 
+export function assertCleanWorktree(repoPath: string): void {
+  const status = runCommand("git status --short", repoPath);
+  if (status.exitCode !== 0) {
+    throw new Error(status.stderr || status.stdout);
+  }
+  if (status.stdout.trim()) {
+    throw new Error(`Refusing to operate on dirty worktree ${repoPath}:\n${status.stdout}`);
+  }
+}
+
 export function createWorktree(targetRepoPath: string, branch: string, baseBranch: string): string {
   const worktreesDir = join(targetRepoPath, ".worktrees");
   mkdirSync(worktreesDir, { recursive: true });
@@ -63,5 +73,11 @@ export function createWorktree(targetRepoPath: string, branch: string, baseBranc
 export function currentHead(repoPath: string): string {
   const result = runCommand("git rev-parse --short HEAD", repoPath);
   if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout);
+  return result.stdout.trim();
+}
+
+export function refHead(repoPath: string, ref: string): string | undefined {
+  const result = runCommand(`git rev-parse --short "${ref}"`, repoPath);
+  if (result.exitCode !== 0) return undefined;
   return result.stdout.trim();
 }

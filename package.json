@@ -11,6 +11,7 @@
     "work": "tsx src/index.ts work",
     "eval": "tsx src/index.ts eval",
     "judge": "tsx src/index.ts judge",
+    "promote": "tsx src/index.ts promote",
     "loop": "tsx src/index.ts loop",
     "daemon": "tsx src/index.ts daemon",
     "analyze": "tsx src/index.ts analyze",

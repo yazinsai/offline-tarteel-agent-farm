@@ -18,6 +18,14 @@ export interface FarmConfig {
   statePath: string;
   /** If set, this file’s presence pauses the farm; if unset, uses <dirname(statePath)>/PAUSED */
   pauseFilePath?: string;
+  promotion?: {
+    /** Branch future workers build from after V3-promising tasks are promoted. */
+    baseBranch?: string;
+    /** Minimum V3 Final ExactSet lift required before promotion/cleanup. Defaults to 3pp. */
+    minV3Delta?: number;
+    /** Set false to disable automatic promotion/cleanup while the daemon is running. */
+    autoPromote?: boolean;
+  };
   baselineReports: {
     v2: string;
     v3: string;
@@ -26,6 +34,8 @@ export interface FarmConfig {
     targetSeqAcc: number;
     minPrecision: number;
     v2SeqAccRegressionTolerance: number;
+    /** Optional legacy gate. Defaults false because this farm optimizes V3 only. */
+    includeV2Gate?: boolean;
     remoteBackend?: "local" | "modal";
     parallelShards?: number;
     cpuLimitPercent?: number;
@@ -64,6 +74,8 @@ export interface Task {
   hypothesis: string;
   prompt: string;
   branch: string;
+  baseBranch?: string;
+  baseHead?: string;
   worktreePath?: string;
   cursorRunId?: string;
   cursorAgentId?: string;
@@ -187,10 +199,33 @@ export interface Decision {
   createdAt: string;
 }
 
+export interface FarmBaseline {
+  branch: string;
+  head: string;
+  v3ArtifactPath?: string;
+  v3FinalExactSet?: number;
+  sourceTaskIds: string[];
+  updatedAt: string;
+}
+
+export interface PromotionRecord {
+  id: string;
+  taskId: string;
+  sourceBranch: string;
+  baseBranch: string;
+  headBefore: string;
+  headAfter?: string;
+  status: "promoted" | "failed" | "cleanup-queued";
+  reason: string;
+  createdAt: string;
+}
+
 export interface FarmState {
   tasks: Task[];
   runs: RunRecord[];
   decisions: Decision[];
+  baseline?: FarmBaseline;
+  promotions?: PromotionRecord[];
 }
 
 export interface StabilityReport {

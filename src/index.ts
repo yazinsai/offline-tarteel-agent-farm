@@ -7,6 +7,17 @@ import { runDashboard } from "./dashboard.js";
 import { evaluateTask } from "./evaluator.js";
 import { judgeTask } from "./judge.js";
 import { enqueueHypothesis, planTasks } from "./planner.js";
+import {
+  activeBaseRef,
+  isPromotionCandidate,
+  maybePromoteTask,
+  needsCleanupPromotion,
+  promotionCleanupSpec,
+  promotionEnabled,
+  promoteTask,
+  v3Delta,
+  wasPromotionHandled,
+} from "./promotion.js";
 import { now, saveStateMerged, findTaskOrThrow, loadState } from "./state.js";
 import { buildSplits } from "./splits.js";
 import { startNextWorker, startWorkerForTask } from "./worker.js";
@@ -74,6 +85,14 @@ async function main(): Promise<void> {
         const taskId = valueAfter(args, "--task") ?? args[0];
         if (!taskId) throw new Error("Usage: npm run judge -- --task <task-id>");
         judgeTask(config, state, findTaskOrThrow(state, taskId));
+        break;
+      }
+
+      case "promote": {
+        const taskId = valueAfter(args, "--task") ?? args[0];
+        if (!taskId) throw new Error("Usage: npm run promote -- --task <task-id>");
+        const record = promoteTask(config, state, findTaskOrThrow(state, taskId));
+        console.log(`${record.status}: ${record.reason}`);
         break;
       }
 
@@ -171,13 +190,21 @@ async function runLoop(
     const evalTask = state.tasks.find((candidate) => candidate.status === "needs-eval");
     if (evalTask) {
       await evaluateTask(config, state, evalTask);
-      judgeTask(config, state, evalTask);
+      const decision = judgeTask(config, state, evalTask);
+      if (!isFarmPaused(config) && promotionEnabled(config)) {
+        const promotion = maybePromoteTask(config, state, evalTask, decision);
+        if (promotion) console.log(`${promotion.status}: ${promotion.reason}`);
+      }
       continue;
     }
 
     if (isFarmPaused(config)) {
       console.log("Farm paused: not starting workers. Clear PAUSED file or AGENT_FARM_PAUSED to continue.");
       return;
+    }
+
+    if (promotionEnabled(config) && processPromotionCandidates(config, state)) {
+      continue;
     }
 
     const availableWorkerSlots = Math.max(
@@ -217,6 +244,18 @@ function printStatus(state: ReturnType<typeof loadState>, config?: ReturnType<ty
   if (config && isFarmPaused(config)) {
     console.log(`Farm: PAUSED (${resolvePauseFilePath(config)} or AGENT_FARM_PAUSED)\n`);
   }
+  if (config) {
+    const base = state.baseline;
+    console.log(
+      `Base: ${
+        base
+          ? `${base.branch}@${base.head} (${base.sourceTaskIds.length} promoted${
+              base.v3FinalExactSet !== undefined ? `, v3 ${(base.v3FinalExactSet * 100).toFixed(1)}%` : ""
+            })`
+          : activeBaseRef(config, state)
+      }`,
+    );
+  }
   const counts = new Map<string, number>();
   for (const task of state.tasks) {
     counts.set(task.status, (counts.get(task.status) ?? 0) + 1);
@@ -234,6 +273,47 @@ function printStatus(state: ReturnType<typeof loadState>, config?: ReturnType<ty
       console.log(`- ${task.id} [${task.status}] ${task.track}: ${task.hypothesis}`);
     }
   }
+}
+
+function processPromotionCandidates(
+  config: ReturnType<typeof loadConfig>,
+  state: ReturnType<typeof loadState>,
+): boolean {
+  const cleanCandidate = state.tasks
+    .filter((task) => isPromotionCandidate(config, task) && !wasPromotionHandled(state, task.id))
+    .sort((a, b) => (v3Delta(b) ?? -Infinity) - (v3Delta(a) ?? -Infinity))[0];
+
+  if (cleanCandidate) {
+    const promotion = promoteTask(config, state, cleanCandidate);
+    console.log(`${promotion.status}: ${promotion.reason}`);
+    return true;
+  }
+
+  const cleanupCandidate = state.tasks
+    .filter((task) => needsCleanupPromotion(config, task) && !wasPromotionHandled(state, task.id))
+    .sort((a, b) => (v3Delta(b) ?? -Infinity) - (v3Delta(a) ?? -Infinity))[0];
+
+  if (!cleanupCandidate) return false;
+
+  const spec = promotionCleanupSpec(cleanupCandidate);
+  const task = enqueueHypothesis(config, state, spec);
+  state.promotions = [
+    ...(state.promotions ?? []),
+    {
+      id: `promotion-${task.id}`,
+      taskId: cleanupCandidate.id,
+      sourceBranch: cleanupCandidate.branch,
+      baseBranch: activeBaseRef(config, state),
+      headBefore: cleanupCandidate.baseHead ?? "",
+      status: "cleanup-queued",
+      reason:
+        `Queued ${task.id} to clean V3 lift ${(v3Delta(cleanupCandidate)! * 100).toFixed(2)}pp ` +
+        `from ${cleanupCandidate.track}.`,
+      createdAt: now(),
+    },
+  ];
+  console.log(`Queued ${task.id}: ${task.track}`);
+  return true;
 }
 
 function recoverInterruptedEvaluations(state: ReturnType<typeof loadState>): void {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { FarmConfig, FarmState, Task, TaskMessage, WorkerResult } from "./types.js";
+import { activeBaseHead, activeBaseRef } from "./promotion.js";
 import { createWorktree } from "./repo.js";
 import { readJson } from "./fs.js";
 import { now, saveStateMerged, upsertTask } from "./state.js";
@@ -47,7 +48,10 @@ export async function startWorkerForTask(
 }
 
 async function startLocalWorker(config: FarmConfig, state: FarmState, task: Task): Promise<void> {
-  const worktreePath = createWorktree(config.targetRepoPath, task.branch, config.baseBranch);
+  const baseRef = activeBaseRef(config, state);
+  task.baseBranch = baseRef;
+  task.baseHead = activeBaseHead(config, state);
+  const worktreePath = createWorktree(config.targetRepoPath, task.branch, baseRef);
   task.worktreePath = worktreePath;
   task.updatedAt = now();
   upsertTask(state, task);
@@ -193,13 +197,15 @@ async function startCloudWorker(config: FarmConfig, state: FarmState, task: Task
   if (!config.targetRepoUrl) {
     throw new Error("Cloud mode requires targetRepoUrl in config.json");
   }
+  task.baseBranch = activeBaseRef(config, state);
+  task.baseHead = activeBaseHead(config, state);
 
   const { Agent } = await import("@cursor/sdk");
   const agent = await Agent.create({
     apiKey: process.env.CURSOR_API_KEY,
     model: { id: modelFor(config, "worker") },
     cloud: {
-      repos: [{ url: config.targetRepoUrl, startingRef: config.baseBranch }],
+      repos: [{ url: config.targetRepoUrl, startingRef: task.baseBranch }],
       autoCreatePR: false,
     },
   } as never);
@@ -225,6 +231,7 @@ function fullWorkerPrompt(config: FarmConfig, task: Task, cwd: string): string {
 
 Task id: ${task.id}
 Branch: ${task.branch}
+Base: ${task.baseBranch ?? config.baseBranch}${task.baseHead ? ` @ ${task.baseHead}` : ""}
 Working directory: ${cwd}
 
 Evaluation ladder expected by the orchestrator:
