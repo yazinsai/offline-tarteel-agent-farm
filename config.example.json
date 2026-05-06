@@ -10,7 +10,7 @@
   "model": "default",
   "mode": "local",
   "maxConcurrentWorkers": 2,
-  "maxConcurrentEvaluations": 1,
+  "maxConcurrentEvaluations": 3,
   "minQueuedTasks": 8,
   "staleWorkerMinutes": 30,
   "statePath": "runs/state.json",

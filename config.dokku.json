@@ -10,7 +10,7 @@
   "model": "default",
   "mode": "local",
   "maxConcurrentWorkers": 3,
-  "maxConcurrentEvaluations": 1,
+  "maxConcurrentEvaluations": 3,
   "minQueuedTasks": 2,
   "staleWorkerMinutes": 30,
   "statePath": "/data/agent-farm/state.json",

@@ -18,7 +18,7 @@ import {
   v3Delta,
   wasPromotionHandled,
 } from "./promotion.js";
-import { now, saveStateMerged, findTaskOrThrow, loadState } from "./state.js";
+import { now, saveStateMerged, findTaskOrThrow, loadState, upsertTask } from "./state.js";
 import { buildSplits } from "./splits.js";
 import { startNextWorker, startWorkerForTask } from "./worker.js";
 
@@ -177,7 +177,6 @@ async function runLoop(
   const useAi = hasFlag(args, "--ai");
   const cycles = Number(valueAfter(args, "--cycles") ?? "1");
 
-  recoverInterruptedEvaluations(state);
   recoverInfrastructureFailures(state);
   recoverStaleWorkers(config, state);
   buildSplits(config);
@@ -187,16 +186,7 @@ async function runLoop(
   }
 
   for (let i = 0; i < cycles; i++) {
-    const evalTask = state.tasks.find((candidate) => candidate.status === "needs-eval");
-    if (evalTask) {
-      await evaluateTask(config, state, evalTask);
-      const decision = judgeTask(config, state, evalTask);
-      if (!isFarmPaused(config) && promotionEnabled(config)) {
-        const promotion = maybePromoteTask(config, state, evalTask, decision);
-        if (promotion) console.log(`${promotion.status}: ${promotion.reason}`);
-      }
-      continue;
-    }
+    startEvaluationSlots(config, state);
 
     if (isFarmPaused(config)) {
       console.log("Farm paused: not starting workers. Clear PAUSED file or AGENT_FARM_PAUSED to continue.");
@@ -207,17 +197,11 @@ async function runLoop(
       continue;
     }
 
-    const availableWorkerSlots = Math.max(
-      0,
-      maxConcurrentWorkers(config) - state.tasks.filter((candidate) => candidate.status === "running").length,
-    );
-    const tasks = queuedTasks(state).slice(0, availableWorkerSlots);
-    if (tasks.length === 0) {
+    const started = startWorkerSlots(config, state);
+    if (started === 0 && state.tasks.every((candidate) => candidate.status !== "running")) {
       console.log("No queued tasks left.");
       break;
     }
-
-    await runWorkerBatch(config, state, tasks);
   }
 
   if (!pausedHere && queuedTasks(state).length < minQueuedTasks(config)) {
@@ -225,19 +209,75 @@ async function runLoop(
   }
 }
 
-async function runWorkerBatch(
+function startEvaluationSlots(
   config: ReturnType<typeof loadConfig>,
   state: ReturnType<typeof loadState>,
-  tasks: ReturnType<typeof queuedTasks>,
-): Promise<void> {
-  console.log(`Starting ${tasks.length} worker${tasks.length === 1 ? "" : "s"}.`);
-  const results = await Promise.allSettled(
-    tasks.map((task) => startWorkerForTask(config, state, task)),
+): number {
+  const availableSlots = Math.max(
+    0,
+    maxConcurrentEvaluations(config) - state.tasks.filter((candidate) => candidate.status === "evaluating").length,
   );
-  const failures = results.filter((result) => result.status === "rejected");
-  if (failures.length > 0) {
-    console.warn(`${failures.length} worker${failures.length === 1 ? "" : "s"} failed in batch.`);
+  const tasks = state.tasks.filter((candidate) => candidate.status === "needs-eval").slice(0, availableSlots);
+  if (tasks.length === 0) return 0;
+
+  console.log(`Starting ${tasks.length} eval${tasks.length === 1 ? "" : "s"}.`);
+  for (const task of tasks) {
+    const startedAt = now();
+    task.status = "evaluating";
+    task.activeStartedAt = startedAt;
+    task.updatedAt = startedAt;
+    upsertTask(state, task);
+    saveStateMerged(config.statePath, state);
+
+    void Promise.resolve()
+      .then(() => evaluateTask(config, state, task))
+      .then(() => {
+        const latestState = loadState(config.statePath);
+        const latestTask = findTaskOrThrow(latestState, task.id);
+        const decision = judgeTask(config, latestState, latestTask);
+        if (!isFarmPaused(config) && promotionEnabled(config)) {
+          const promotion = maybePromoteTask(config, latestState, latestTask, decision);
+          if (promotion) console.log(`${promotion.status}: ${promotion.reason}`);
+        }
+        saveStateMerged(config.statePath, latestState);
+      })
+      .catch((error) => {
+        console.error(`[${task.id}] eval failed:`);
+        console.error(error);
+      });
   }
+  return tasks.length;
+}
+
+function startWorkerSlots(
+  config: ReturnType<typeof loadConfig>,
+  state: ReturnType<typeof loadState>,
+): number {
+  const availableSlots = Math.max(
+    0,
+    maxConcurrentWorkers(config) - state.tasks.filter((candidate) => candidate.status === "running").length,
+  );
+  const tasks = queuedTasks(state).slice(0, availableSlots);
+  if (tasks.length === 0) return 0;
+
+  console.log(`Starting ${tasks.length} worker${tasks.length === 1 ? "" : "s"}.`);
+  for (const task of tasks) {
+    const startedAt = now();
+    task.status = "running";
+    task.updatedAt = startedAt;
+    task.activeStartedAt = startedAt;
+    task.workerHeartbeatAt = startedAt;
+    upsertTask(state, task);
+    saveStateMerged(config.statePath, state);
+
+    void Promise.resolve()
+      .then(() => startWorkerForTask(config, state, task))
+      .catch((error) => {
+        console.error(`[${task.id}] worker failed:`);
+        console.error(error);
+      });
+  }
+  return tasks.length;
 }
 
 function printStatus(state: ReturnType<typeof loadState>, config?: ReturnType<typeof loadConfig>): void {
@@ -370,6 +410,10 @@ function queuedTasks(state: ReturnType<typeof loadState>) {
 
 function maxConcurrentWorkers(config: ReturnType<typeof loadConfig>): number {
   return Math.max(1, Math.floor(config.maxConcurrentWorkers || 1));
+}
+
+function maxConcurrentEvaluations(config: ReturnType<typeof loadConfig>): number {
+  return Math.max(1, Math.floor(config.maxConcurrentEvaluations || 1));
 }
 
 function minQueuedTasks(config: ReturnType<typeof loadConfig>): number {
